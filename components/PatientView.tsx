@@ -1,7 +1,8 @@
+
 import React, { useState } from 'react';
-import { Patient } from '../types';
+import { Patient, CriticalStatus } from '../types';
 import { Card, Badge, Button } from './ui_components';
-import { generatePatientId } from '../services/mockMesh';
+import { generatePatientId, bookAppointment, addPatientCondition } from '../services/mockMesh';
 
 interface PatientViewProps {
   patients: Patient[];
@@ -18,46 +19,72 @@ const calculateAge = (dateOfBirth: string): number => {
   return age;
 };
 
-// --- Subcomponents for Patient UI ---
-
-const TabButton: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-  <button 
-    onClick={onClick}
-    className={`flex-1 py-3 text-sm font-medium rounded-full transition-all duration-300 ${active ? 'bg-medical-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}
-  >
-    {children}
-  </button>
-);
-
-// --- Main Component ---
+const getStatusColor = (status: CriticalStatus) => {
+  switch (status) {
+    case CriticalStatus.CRITICAL: return 'red';
+    case CriticalStatus.UNSTABLE: return 'orange';
+    case CriticalStatus.STABLE: return 'green';
+    case CriticalStatus.RECOVERING: return 'teal';
+    case CriticalStatus.DISCHARGED: return 'gray';
+    default: return 'blue';
+  }
+};
 
 export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
   const [authPatient, setAuthPatient] = useState<Patient | null>(null);
   const [loginName, setLoginName] = useState('');
   const [loginDob, setLoginDob] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [activeTab, setActiveTab] = useState<'overview' | 'records' | 'letters'>('overview');
+
+  // Appointment Modal State
+  const [showApptModal, setShowApptModal] = useState(false);
+  const [apptDate, setApptDate] = useState('');
+  const [apptReason, setApptReason] = useState('');
+
+  // Condition Modal State
+  const [showCondModal, setShowCondModal] = useState(false);
+  const [newCondition, setNewCondition] = useState('');
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    
+    // Generate ID matches the mockMesh logic: Name (Upper, No Spaces) + DOB (YYYYMMDD)
     const generatedId = generatePatientId(loginName, loginDob);
+    
     const found = patients.find(p => p.id === generatedId);
     
     if (found) {
       setAuthPatient(found);
     } else {
-      setLoginError('Record not found. Please check your details.');
+      console.log("Attempted ID:", generatedId);
+      setLoginError('Patient record not found. Please check exact spelling and date.');
     }
   };
 
+  const handleBookAppointment = () => {
+      if (!authPatient) return;
+      bookAppointment(authPatient.id, apptReason, apptDate);
+      alert("Appointment Requested. Awaiting Doctor Confirmation.");
+      setShowApptModal(false);
+      setApptReason('');
+      setApptDate('');
+  };
+
+  const handleAddCondition = () => {
+      if (!authPatient) return;
+      addPatientCondition(authPatient.id, newCondition);
+      alert("Condition added to file (Self-Reported).");
+      setShowCondModal(false);
+      setNewCondition('');
+  };
+
   if (!authPatient) {
-    // Login Stage
     return (
       <div className="max-w-md mx-auto mt-10 px-4">
         <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-white mb-2">Welcome to CrisisNet</h2>
-          <p className="text-slate-400">Secure Patient Portal</p>
+          <h2 className="text-2xl font-bold text-white mb-2">Patient Access</h2>
+          <p className="text-slate-400">Secure Medical Digital Packet</p>
         </div>
         
         <Card className="border-t-4 border-t-medical-500 bg-slate-900/50 backdrop-blur-sm">
@@ -68,7 +95,7 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                 type="text" 
                 required
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-medical-500 outline-none transition-colors"
-                placeholder="e.g. John Doe"
+                placeholder="e.g. Khaled Saar"
                 value={loginName}
                 onChange={(e) => setLoginName(e.target.value)}
               />
@@ -85,212 +112,193 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
             </div>
             
             {loginError && (
-              <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-200 text-sm text-center">
+              <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-200 text-sm text-center animate-pulse">
                 {loginError}
               </div>
             )}
+            
+            <div className="bg-slate-800/50 p-3 rounded text-xs text-slate-500 mb-4">
+               <p className="font-bold mb-2 uppercase tracking-wider">Tap to autofill demo user:</p>
+               <div className="flex flex-col gap-2">
+                  {/* 
+                      NOTE: These dates must match generateSimulatedDOB logic in mockMesh.ts 
+                      Index 0 (Khaled): 1970-01-01
+                      Index 1 (Mira): 2007-08-14
+                  */}
+                  <button type="button" onClick={() => { setLoginName('Khaled Saar'); setLoginDob('1970-01-01'); }} className="bg-slate-700 px-3 py-2 rounded hover:bg-slate-600 text-left flex justify-between items-center transition-colors">
+                    <span>Khaled Saar</span>
+                    <span className="font-mono text-slate-400">1970-01-01</span>
+                  </button>
+                  <button type="button" onClick={() => { setLoginName('Mira Joud'); setLoginDob('2007-08-14'); }} className="bg-slate-700 px-3 py-2 rounded hover:bg-slate-600 text-left flex justify-between items-center transition-colors">
+                    <span>Mira Joud</span>
+                    <span className="font-mono text-slate-400">2007-08-14</span>
+                  </button>
+               </div>
+            </div>
 
             <Button type="submit" className="w-full py-3 text-lg shadow-xl">
-              Access Records
+              Open Medical Packet
             </Button>
           </form>
         </Card>
-        
-        <p className="text-center text-xs text-slate-500 mt-8">
-          Your data is stored locally on the mesh network. <br/>
-          No internet connection required.
-        </p>
       </div>
     );
   }
 
-  // Authenticated View
   const age = calculateAge(authPatient.dateOfBirth);
-  const upcomingAppointments = authPatient.records.filter(r => r.type === 'APPOINTMENT' && new Date(r.date) > new Date(new Date().setDate(new Date().getDate() - 1)));
   
   return (
-    <div className="max-w-lg mx-auto pb-20 animate-fade-in">
+    <div className="max-w-lg mx-auto pb-20 animate-fade-in px-2 md:px-0">
       
-      {/* Header Greeting */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Hello, {authPatient.name.split(' ')[0]}</h1>
-          <p className="text-slate-400 text-sm">ID: {authPatient.id}</p>
+      {/* ID CARD HEADER */}
+      <div className="bg-gradient-to-br from-medical-900 to-slate-900 rounded-2xl p-6 shadow-2xl border border-medical-700/50 mb-6 relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-4 opacity-10">
+           <svg width="100" height="100" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3M18 11H13V16H11V11H6V9H11V4H13V9H18V11Z"/></svg>
         </div>
-        <div className="w-10 h-10 rounded-full bg-medical-900/50 border border-medical-500 flex items-center justify-center text-medical-400 font-bold text-lg">
-          {authPatient.name.charAt(0)}
+        <div className="flex justify-between items-start relative z-10">
+           <div>
+             <h1 className="text-2xl font-bold text-white tracking-tight">{authPatient.name}</h1>
+             <p className="text-medical-300 font-mono text-sm mt-1">{authPatient.id}</p>
+           </div>
+           <div className="text-right">
+             <div className="text-xs text-medical-300 uppercase font-bold">Blood Type</div>
+             <div className="text-3xl font-bold text-white">{authPatient.bloodType}</div>
+           </div>
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-4 relative z-10">
+           <div>
+             <div className="text-xs text-medical-300 uppercase">Date of Birth</div>
+             <div className="text-lg text-white font-mono">{authPatient.dateOfBirth}</div>
+             <div className="text-sm text-medical-400">Age: {age}</div>
+           </div>
+           <div className="text-right">
+              <div className="text-xs text-medical-300 uppercase">Status</div>
+              <Badge color={getStatusColor(authPatient.status)}>{authPatient.status}</Badge>
+           </div>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex bg-slate-900 p-1 rounded-full mb-6 border border-slate-800">
-        <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>Overview</TabButton>
-        <TabButton active={activeTab === 'letters'} onClick={() => setActiveTab('letters')}>Letters</TabButton>
-        <TabButton active={activeTab === 'records'} onClick={() => setActiveTab('records')}>History</TabButton>
+      {/* QUICK ACTIONS */}
+      <div className="grid grid-cols-2 gap-3 mb-6">
+          <Button onClick={() => setShowApptModal(true)} className="text-xs py-3 bg-slate-800 border border-slate-700 hover:border-medical-500">
+             📅 Book Appointment
+          </Button>
+          <Button onClick={() => setShowCondModal(true)} className="text-xs py-3 bg-slate-800 border border-slate-700 hover:border-medical-500">
+             📝 Report Condition
+          </Button>
       </div>
 
-      {/* Tab Content */}
-      <div className="space-y-6">
-        
-        {/* OVERVIEW TAB */}
-        {activeTab === 'overview' && (
-          <>
-            <Card className="text-center border-none bg-gradient-to-b from-slate-800 to-slate-900">
-               <div className="flex flex-col items-center">
-                 
-                 <div className="w-full grid grid-cols-3 gap-2 text-center pb-4">
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase">Blood</p>
-                      <p className="text-lg font-bold text-white">{authPatient.bloodType}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase">Age</p>
-                      <p className="text-lg font-bold text-white">{age}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase">Status</p>
-                      <span className={`inline-block w-3 h-3 rounded-full mt-1.5 ${authPatient.status === 'CRITICAL' ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
-                    </div>
-                 </div>
-
-                 {/* UPCOMING APPOINTMENTS */}
-                 {upcomingAppointments.length > 0 ? (
-                    <div className="w-full bg-blue-900/20 border border-blue-800 rounded-xl p-4 text-left mt-2">
-                      <div className="flex items-center gap-2 mb-2 text-blue-300">
-                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                           <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
-                         </svg>
-                         <span className="font-bold text-sm">Upcoming Appointment</span>
-                      </div>
-                      {upcomingAppointments.map(appt => (
-                        <div key={appt.id} className="mb-2 last:mb-0">
-                           <p className="text-lg font-bold text-white">{new Date(appt.date).toLocaleDateString()}</p>
-                           <p className="text-sm text-slate-300">{appt.description}</p>
-                           <div className="mt-1 text-xs text-slate-400 flex justify-between">
-                             <span>{appt.location}</span>
-                             <span>{appt.doctorName}</span>
-                           </div>
-                        </div>
-                      ))}
-                    </div>
-                 ) : (
-                   <div className="w-full p-4 bg-slate-800/50 rounded-xl text-slate-500 text-sm mt-2 border border-slate-700 border-dashed">
-                     No upcoming appointments scheduled.
-                   </div>
-                 )}
-
-               </div>
-            </Card>
-
-            <div className="grid grid-cols-1 gap-4">
-              <Card title="My Conditions">
-                {authPatient.conditions.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {authPatient.conditions.map(c => (
-                      <span key={c} className="px-3 py-1 bg-slate-700 rounded-full text-slate-200 text-sm border border-slate-600">
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                ) : <p className="text-slate-500 italic">No chronic conditions reported.</p>}
-              </Card>
-
-              <Card title="Allergies">
-                {authPatient.allergies.length > 0 ? (
-                   <div className="flex flex-wrap gap-2">
-                     {authPatient.allergies.map(a => (
-                       <span key={a} className="px-3 py-1 bg-red-900/30 rounded-full text-red-200 text-sm border border-red-800">
-                         {a}
-                       </span>
-                     ))}
-                   </div>
-                ) : <p className="text-slate-500 italic">No known allergies.</p>}
-              </Card>
-            </div>
-          </>
-        )}
-
-        {/* LETTERS TAB */}
-        {activeTab === 'letters' && (
-          <div className="space-y-4">
-            {authPatient.records.filter(r => r.type === 'LETTER' || r.type === 'DIAGNOSIS').length === 0 ? (
-              <div className="text-center py-10 text-slate-500">
-                <p>No correspondence on file.</p>
-              </div>
-            ) : (
-              authPatient.records
-                .filter(r => r.type === 'LETTER' || r.type === 'DIAGNOSIS')
-                .map(doc => (
-                <div key={doc.id} className="bg-white text-slate-900 p-6 rounded-lg shadow-lg max-w-full mx-auto relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-medical-600"></div>
-                  <div className="flex justify-between items-start mb-6 border-b border-slate-200 pb-4">
-                    <div>
-                      <h3 className="font-bold text-xl text-slate-800">Medical Summary</h3>
-                      <p className="text-sm text-slate-500">{doc.location}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono text-sm text-slate-600">{new Date(doc.date).toLocaleDateString()}</p>
-                      <p className="text-xs text-slate-400 uppercase">Ref: {doc.id}</p>
-                    </div>
-                  </div>
-                  
-                  <div className="mb-6">
-                    <p className="text-sm font-bold text-slate-700 mb-1">RE: {authPatient.name} (DOB: {authPatient.dateOfBirth})</p>
-                    <p className="text-sm text-slate-600">Attending: {doc.doctorName}</p>
-                  </div>
-
-                  <div className="prose prose-sm text-slate-800 mb-6">
-                    <p className="leading-relaxed">
-                      {doc.description}
-                    </p>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-4 border-t border-slate-100">
-                     <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 text-xs font-bold">DR</div>
-                        <div className="text-xs text-slate-500">
-                          Signed electronically<br/>
-                          {doc.doctorName}
-                        </div>
-                     </div>
-                     <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                       {doc.type}
-                     </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* RECORDS TAB */}
-        {activeTab === 'records' && (
-          <Card title="Full Medical History" className="pb-2">
-             <div className="divide-y divide-slate-800">
-               {authPatient.records.map(rec => (
-                 <div key={rec.id} className="py-4 first:pt-0">
-                   <div className="flex justify-between mb-1">
-                      <Badge color="blue">{rec.type}</Badge>
-                      <span className="text-xs text-slate-500 font-mono">{new Date(rec.date).toLocaleDateString()}</span>
-                   </div>
-                   <p className="text-slate-300 text-sm mt-2">{rec.description}</p>
-                   <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                      <span>👨‍⚕️ {rec.doctorName}</span>
-                      <span>📍 {rec.location}</span>
-                   </div>
-                 </div>
+      {/* CRITICAL MEDICAL ALERTS */}
+      <div className="space-y-4 mb-8">
+         <Card title="Allergies & Conditions" className="border-l-4 border-l-yellow-500 shadow-lg">
+            <div className="flex flex-wrap gap-2">
+               {authPatient.allergies.length > 0 ? (
+                  authPatient.allergies.map(a => (
+                    <span key={a} className="px-3 py-1 bg-red-900/30 text-red-200 border border-red-800 rounded-md text-sm font-bold flex items-center gap-1">
+                      ⚠️ {a}
+                    </span>
+                  ))
+               ) : <span className="text-slate-500 text-sm">No known allergies</span>}
+               
+               {authPatient.conditions.map(c => (
+                 <span key={c} className="px-3 py-1 bg-slate-800 text-slate-300 border border-slate-600 rounded-md text-sm">
+                   {c}
+                 </span>
                ))}
-             </div>
-          </Card>
-        )}
+            </div>
+         </Card>
 
+         <Card title="Active Prescriptions" className="border-l-4 border-l-green-500 shadow-lg">
+            {authPatient.activePrescriptions.length > 0 ? (
+              <ul className="space-y-2">
+                {authPatient.activePrescriptions.map((p, i) => (
+                  <li key={i} className="flex justify-between items-center text-slate-300 text-sm border-b border-slate-800 pb-2 last:border-0 last:pb-0">
+                    <span className="font-medium">💊 {p}</span>
+                    <span className="text-xs text-green-400 bg-green-900/20 px-2 py-0.5 rounded">Active</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-slate-500 text-sm italic">No active medications</p>}
+         </Card>
       </div>
-      
-      <div className="mt-8 text-center">
-        <Button variant="secondary" onClick={() => setAuthPatient(null)} className="mx-auto text-sm">
-          Log Out
+
+      {/* HISTORY */}
+      <h3 className="text-slate-400 font-bold uppercase text-xs tracking-wider mb-3 pl-1">Recent History</h3>
+      <div className="space-y-3 mb-8">
+        {authPatient.records.map((rec, idx) => (
+          <div key={rec.id} className="bg-slate-800/80 border border-slate-700 rounded-lg p-4 shadow-sm">
+             <div className="flex justify-between mb-2">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded ${rec.type === 'APPOINTMENT' ? 'bg-purple-900 text-purple-200' : rec.type === 'PRESCRIPTION' ? 'bg-green-900 text-green-200' : 'bg-slate-700 text-slate-300'}`}>
+                  {rec.type}
+                </span>
+                <span className="text-xs text-slate-500 font-mono">{new Date(rec.date).toLocaleDateString()}</span>
+             </div>
+             <p className="text-slate-300 text-sm leading-relaxed">{rec.description}</p>
+             <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 border-t border-slate-700/50 pt-2">
+               <span className="font-medium text-slate-400">{rec.doctorName}</span>
+               <span>•</span>
+               <span>{rec.location}</span>
+             </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-10 text-center">
+        <Button variant="outline" onClick={() => setAuthPatient(null)} className="text-xs w-full py-3">
+          Close Packet (Logout)
         </Button>
       </div>
+
+      {/* MODALS */}
+      {showApptModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm">
+                  <h3 className="text-lg font-bold text-white mb-4">Request Appointment</h3>
+                  <div className="space-y-3">
+                      <div>
+                          <label className="text-xs text-slate-400 mb-1 block">Preferred Date</label>
+                          <input type="date" className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-medical-500"
+                            value={apptDate} onChange={e => setApptDate(e.target.value)}
+                          />
+                      </div>
+                      <div>
+                          <label className="text-xs text-slate-400 mb-1 block">Reason for visit</label>
+                          <textarea className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-medical-500 min-h-[80px]"
+                             placeholder="Describe symptoms..."
+                             value={apptReason} onChange={e => setApptReason(e.target.value)}
+                          ></textarea>
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowApptModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleBookAppointment} className="flex-1">Book</Button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showCondModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm">
+                  <h3 className="text-lg font-bold text-white mb-4">Self-Report Condition</h3>
+                  <div className="space-y-3">
+                      <div>
+                          <label className="text-xs text-slate-400 mb-1 block">Condition Name</label>
+                          <input type="text" className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-medical-500"
+                             placeholder="e.g. Migraine, Stomach Flu..."
+                             value={newCondition} onChange={e => setNewCondition(e.target.value)}
+                          />
+                      </div>
+                      <p className="text-[10px] text-slate-500 italic">Note: This will be added to your file as self-reported and requires doctor validation.</p>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowCondModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleAddCondition} className="flex-1">Submit</Button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
     </div>
   );
 };

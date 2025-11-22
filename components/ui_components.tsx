@@ -38,12 +38,15 @@ export const Card: React.FC<{ children: React.ReactNode; title?: string; classNa
   </div>
 );
 
-export const Badge: React.FC<{ children: React.ReactNode; color?: 'blue' | 'red' | 'green' | 'yellow' }> = ({ children, color = 'blue' }) => {
+export const Badge: React.FC<{ children: React.ReactNode; color?: 'blue' | 'red' | 'green' | 'yellow' | 'orange' | 'teal' | 'gray' }> = ({ children, color = 'blue' }) => {
   const colors = {
     blue: 'bg-blue-900/50 text-blue-200 border-blue-700',
     red: 'bg-red-900/50 text-red-200 border-red-700',
     green: 'bg-green-900/50 text-green-200 border-green-700',
-    yellow: 'bg-yellow-900/50 text-yellow-200 border-yellow-700'
+    yellow: 'bg-yellow-900/50 text-yellow-200 border-yellow-700',
+    orange: 'bg-orange-900/50 text-orange-200 border-orange-700',
+    teal: 'bg-teal-900/50 text-teal-200 border-teal-700',
+    gray: 'bg-slate-700 text-slate-300 border-slate-600'
   };
   return (
     <span className={`px-2 py-0.5 rounded text-xs border ${colors[color]} font-mono uppercase`}>
