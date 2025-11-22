@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Patient, MedicalRecord, CriticalStatus, SupplyStock, StaffMember, Hospital, StaffStatus } from '../types';
 import { Card, Button, Badge } from './ui_components';
-import { updatePatient, createSupplyRequest, requestPatientTransfer, getMeshState, updateAppointment } from '../services/mockMesh';
+import { updatePatient, createSupplyRequest, requestPatientTransfer, getMeshState, updateAppointment, updateStaffStatus } from '../services/mockMesh';
 // @ts-ignore
 import jsQR from 'jsqr';
 
@@ -13,6 +14,7 @@ interface DoctorViewProps {
 export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }) => {
   const [currentUser, setCurrentUser] = useState<StaffMember | null>(null);
   const [currentHospital, setCurrentHospital] = useState<Hospital | null>(null);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [activeTab, setActiveTab] = useState<'PATIENTS' | 'APPOINTMENTS'>('PATIENTS');
   
   // Patient Selection
@@ -31,7 +33,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   // Supply Request State
   const [showSupplyModal, setShowSupplyModal] = useState(false);
   const [supplyItem, setSupplyItem] = useState('');
-  const [supplyResourceType, setSupplyResourceType] = useState('General');
+  const [supplyResourceTypes, setSupplyResourceTypes] = useState<string[]>([]);
   const [supplyQty, setSupplyQty] = useState(1);
   const [supplySeverity, setSupplySeverity] = useState<'low' | 'medium' | 'critical'>('low');
   const [supplyDate, setSupplyDate] = useState('');
@@ -41,6 +43,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferUrgency, setTransferUrgency] = useState<'IMMEDIATE' | 'STABLE'>('STABLE');
   const [transferReason, setTransferReason] = useState('');
+  const [suggestedTargetId, setSuggestedTargetId] = useState('');
 
   // Appointment Manage State
   const [showPostponeModal, setShowPostponeModal] = useState(false);
@@ -60,6 +63,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   useEffect(() => {
     const state = getMeshState();
     setAvailableStaff(state.staff.filter(s => s.role === 'doctor'));
+    setHospitals(state.hospitals);
   }, []);
 
   useEffect(() => {
@@ -197,32 +201,40 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
     if (!supplyItem.trim()) { alert("Error: Item Name cannot be empty."); return; }
     if (isNaN(supplyQty) || supplyQty <= 0) { alert("Error: Quantity must be a positive number."); return; }
 
-    createSupplyRequest(supplyItem, supplyQty, currentUser.id, currentUser.hospitalId, supplySeverity, supplyResourceType, (linkToPatient && activePatient) ? activePatient.id : undefined, (linkToPatient && activePatient) ? activePatient.name : undefined, supplyDate, currentUser.name);
+    createSupplyRequest(
+        supplyItem, 
+        supplyQty, 
+        currentUser.id, 
+        currentUser.hospitalId, 
+        supplySeverity, 
+        supplyResourceTypes, 
+        (linkToPatient && activePatient) ? activePatient.id : undefined, 
+        (linkToPatient && activePatient) ? activePatient.name : undefined, 
+        supplyDate, 
+        currentUser.name
+    );
     setShowSupplyModal(false);
     setSupplyItem('');
-    setSupplyResourceType('General');
+    setSupplyResourceTypes([]);
     setSupplyQty(1);
     alert(`Request for ${supplyQty}x ${supplyItem} logged.`);
   };
 
-  const handlePresetSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const val = e.target.value;
-      if (val === 'BLOOD_O') { setSupplyItem('O- Negative Blood'); setSupplyResourceType('Blood'); setSupplySeverity('critical'); } 
-      else if (val === 'TRAUMA_KIT') { setSupplyItem('Trauma Kit (Advanced)'); setSupplyResourceType('Tools'); setSupplySeverity('critical'); } 
-      else if (val === 'INSULIN') { setSupplyItem('Insulin Vials'); setSupplyResourceType('Medicine'); } 
-      else if (val === 'ANTIBIOTICS') { setSupplyItem('Broad Spectrum Antibiotics'); setSupplyResourceType('Medicine'); } 
-      else { setSupplyResourceType('General'); setSupplyItem(''); }
-  }
+  const toggleResourceType = (type: string) => {
+      setSupplyResourceTypes(prev => 
+          prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+      );
+  };
 
   const submitTransferRequest = () => {
     if (!activePatient || !currentUser) return;
-    requestPatientTransfer(activePatient.id, activePatient.name, currentUser.hospitalId, currentUser.id, transferUrgency, transferReason);
+    requestPatientTransfer(activePatient.id, activePatient.name, currentUser.hospitalId, currentUser.id, transferUrgency, transferReason, suggestedTargetId);
     
     const newRecord: MedicalRecord = {
         id: Math.random().toString(36).substr(2, 9),
         date: new Date().toISOString(),
         type: 'TRANSFER',
-        description: `Transfer Requested. Urgency: ${transferUrgency}. Reason: ${transferReason}`,
+        description: `Transfer Requested to ${suggestedTargetId || 'Any'}. Urgency: ${transferUrgency}. Reason: ${transferReason}`,
         doctorName: currentUser.name,
         location: currentHospital?.name || 'Field'
     };
@@ -230,6 +242,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
     updatePatient(updatedPatient);
     setShowTransferModal(false);
     setTransferReason('');
+    setSuggestedTargetId('');
     onDataUpdate();
     alert("Transfer request logged.");
   };
@@ -259,6 +272,13 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const handleManualScan = () => {
       handleQRSuccess(scanInput);
       setScanInput('');
+  }
+
+  const handleStatusChange = (newStatus: StaffStatus) => {
+      if(currentUser) {
+          updateStaffStatus(currentUser.id, newStatus);
+          setCurrentUser({...currentUser, status: newStatus});
+      }
   }
 
   const getStatusColor = (status: CriticalStatus) => {
@@ -309,9 +329,9 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
     <div className="h-[calc(100vh-120px)] flex flex-col relative">
       
       {activePatient && activePatient.status === CriticalStatus.CRITICAL && (
-          <div className="w-full bg-red-50 border-b border-red-200 p-2 text-center text-red-700 text-sm font-bold flex items-center justify-center gap-2 shadow-sm">
+          <div className="w-full bg-red-50 border-b border-red-200 p-2 text-center text-red-700 text-sm font-bold flex items-center justify-center gap-2 shadow-sm animate-pulse z-40">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-              ATTENTION: Selected Patient {activePatient.name} is CRITICAL.
+              <span>CRITICAL PATIENT: <span className="underline">{activePatient.name}</span> requires immediate attention.</span>
           </div>
       )}
 
@@ -324,12 +344,22 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
               <span className="flex items-center gap-1">📍 {currentHospital?.province}</span>
             </div>
          </div>
-         <div className="flex gap-2">
+         <div className="flex gap-2 items-center">
+            <select 
+                className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-sm px-2 py-1.5 outline-none focus:border-medical-500 font-bold uppercase"
+                value={currentUser.status}
+                onChange={(e) => handleStatusChange(e.target.value as StaffStatus)}
+            >
+                <option value={StaffStatus.AVAILABLE}>Available</option>
+                <option value={StaffStatus.BUSY}>Busy</option>
+                <option value={StaffStatus.OFF_DUTY}>Off Duty</option>
+            </select>
+            <div className="h-6 w-px bg-slate-300 mx-2"></div>
             <Button variant="outline" onClick={() => setShowScanModal(true)} className="text-xs py-1.5 gap-2">
                Scan QR
             </Button>
-            <Button variant="outline" onClick={() => setShowSupplyModal(true)} className="text-xs py-1.5">
-               + Supplies
+            <Button variant="primary" onClick={() => setShowSupplyModal(true)} className="text-xs py-1.5 gap-2 bg-medical-600 text-white hover:bg-medical-700">
+               + Request Supplies
             </Button>
             <Button variant="secondary" onClick={() => setCurrentUser(null)} className="text-xs py-1.5">Exit Shift</Button>
          </div>
@@ -356,7 +386,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                    </div>
                  ))}
                </div>
-               <button onClick={() => setShowSupplyModal(true)} className="w-full mt-3 bg-red-600 hover:bg-red-700 text-white text-xs py-1.5 rounded-sm font-medium">
+               <button onClick={() => setShowSupplyModal(true)} className="w-full mt-3 bg-red-600 hover:bg-red-700 text-white text-xs py-1.5 rounded-sm font-medium uppercase tracking-wider">
                    Order Restock Now
                </button>
             </div>
@@ -484,7 +514,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                                         <Badge color={isPrescription ? 'green' : 'gray'}>{rec.type}</Badge>
                                         <span className="text-xs font-bold text-slate-700">{rec.doctorName}</span>
                                     </div>
-                                    <span className="text-[10px] text-slate-400 font-mono mt-1 sm:mt-0">
+                                    <span className="text-xs text-slate-400 font-mono mt-1 sm:mt-0">
                                         {new Date(rec.date).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}
                                     </span>
                                 </div>
@@ -507,34 +537,141 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
         </div>
       </div>
 
-      {/* MODALS: Supply, Transfer, Postpone, QR - Converted to Light Theme */}
+      {/* MODALS */}
       {showSupplyModal && (
-         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-            <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
-               <h3 className="text-lg font-bold text-slate-900 mb-4 border-b border-slate-100 pb-2">Request Supplies</h3>
-               <div className="space-y-4">
-                  <div>
-                     <label className="block text-xs text-slate-500 mb-1 font-bold">Quick Select</label>
-                     <select className="w-full bg-white border border-slate-300 rounded-sm px-3 py-2 text-slate-900 text-sm outline-none" onChange={handlePresetSelect}>
-                        <option value="">-- Select Item Type --</option>
-                        <option value="BLOOD_O">Blood O-</option>
-                        <option value="TRAUMA_KIT">Trauma Kit</option>
-                        <option value="INSULIN">Insulin</option>
-                        <option value="ANTIBIOTICS">Antibiotics</option>
-                     </select>
+         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-lg shadow-2xl">
+               <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                 <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                   <span className="w-2 h-4 bg-medical-500 inline-block"></span>
+                   Request Supplies
+                 </h3>
+                 <button onClick={() => setShowSupplyModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+               </div>
+               
+               <div className="space-y-5">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Item Name / Description</label>
+                        <input 
+                          className="w-full bg-white border border-slate-300 rounded-sm px-3 py-2 text-slate-900 text-sm outline-none focus:border-medical-500 focus:ring-1 focus:ring-medical-500" 
+                          placeholder="e.g. Surgical Gloves, Saline..."
+                          value={supplyItem} 
+                          onChange={e => setSupplyItem(e.target.value)} 
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Quantity</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          className="w-full bg-white border border-slate-300 rounded-sm px-3 py-2 text-slate-900 text-sm outline-none focus:border-medical-500" 
+                          value={supplyQty} 
+                          onChange={e => setSupplyQty(parseInt(e.target.value))} 
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Required By Date</label>
+                        <input 
+                          type="date"
+                          className="w-full bg-white border border-slate-300 rounded-sm px-3 py-2 text-slate-900 text-sm outline-none focus:border-medical-500"
+                          value={supplyDate}
+                          onChange={e => setSupplyDate(e.target.value)}
+                        />
+                    </div>
                   </div>
+
                   <div>
-                     <label className="block text-xs text-slate-500 mb-1 font-bold">Item Name</label>
-                     <input className="w-full bg-white border border-slate-300 rounded-sm px-3 py-2 text-slate-900 text-sm outline-none" value={supplyItem} onChange={e => setSupplyItem(e.target.value)} />
+                      <label className="block text-xs text-slate-500 mb-2 font-bold">Resource Type(s)</label>
+                      <div className="flex flex-wrap gap-2">
+                         {['Medicine', 'Tools', 'Blood', 'Food', 'Water', 'Fuel', 'Labor'].map(type => (
+                             <button
+                                key={type}
+                                onClick={() => toggleResourceType(type)}
+                                className={`px-3 py-1 text-xs rounded-full border font-bold transition-all ${
+                                    supplyResourceTypes.includes(type) 
+                                    ? 'bg-medical-600 text-white border-medical-600 shadow-sm' 
+                                    : 'bg-white text-slate-500 border-slate-200 hover:border-medical-300 hover:bg-slate-50'
+                                }`}
+                             >
+                                {supplyResourceTypes.includes(type) ? '✓ ' : '+ '}{type}
+                             </button>
+                         ))}
+                      </div>
                   </div>
-                  {/* ... Other inputs following same style ... */}
+
+                  <div>
+                      <label className="block text-xs text-slate-500 mb-2 font-bold">Urgency Level</label>
+                      <div className="flex gap-2">
+                          <button 
+                            onClick={() => setSupplySeverity('low')} 
+                            className={`flex-1 py-2 rounded-sm text-xs font-bold border transition-all ${supplySeverity === 'low' ? 'bg-slate-100 border-slate-400 text-slate-800' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                          >
+                             LOW (7d)
+                          </button>
+                          <button 
+                            onClick={() => setSupplySeverity('medium')} 
+                            className={`flex-1 py-2 rounded-sm text-xs font-bold border transition-all ${supplySeverity === 'medium' ? 'bg-orange-50 border-orange-400 text-orange-800' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                          >
+                             MEDIUM (3d)
+                          </button>
+                          <button 
+                            onClick={() => setSupplySeverity('critical')} 
+                            className={`flex-1 py-2 rounded-sm text-xs font-bold border transition-all ${supplySeverity === 'critical' ? 'bg-red-50 border-red-500 text-red-700' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                          >
+                             CRITICAL (24h)
+                          </button>
+                      </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-sm">
+                     <input type="checkbox" id="linkPatient" checked={linkToPatient} onChange={e => setLinkToPatient(e.target.checked)} className="rounded border-slate-300 text-medical-600 focus:ring-medical-500" />
+                     <label htmlFor="linkPatient" className="text-xs text-slate-700 flex-1">Link to Patient Record {activePatient ? `(${activePatient.name})` : ''}</label>
+                     {linkToPatient && activePatient && <span className="text-[10px] font-mono bg-white px-1 border border-slate-200">{activePatient.id}</span>}
+                  </div>
+
                   <div className="flex gap-3 mt-6">
                      <Button variant="secondary" onClick={() => setShowSupplyModal(false)} className="flex-1">Cancel</Button>
-                     <Button onClick={submitSupplyRequest} className="flex-1">Submit</Button>
+                     <Button onClick={submitSupplyRequest} className="flex-1 bg-medical-600 text-white hover:bg-medical-700 shadow-md">Submit Request</Button>
                   </div>
                </div>
             </div>
          </div>
+      )}
+
+      {/* Transfer Modal */}
+      {showTransferModal && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
+                <h3 className="text-lg font-bold text-slate-900 mb-4">Request Patient Transfer</h3>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Reason for Transfer</label>
+                        <textarea className="w-full bg-white border border-slate-300 rounded-sm p-2 text-sm outline-none h-20" value={transferReason} onChange={e => setTransferReason(e.target.value)} placeholder="e.g. Needs surgery unavailable here..." />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Suggested Destination</label>
+                        <select className="w-full bg-white border border-slate-300 rounded-sm p-2 text-sm outline-none" value={suggestedTargetId} onChange={e => setSuggestedTargetId(e.target.value)}>
+                            <option value="">-- Any Available --</option>
+                            {hospitals.filter(h => h.id !== currentHospital?.id).map(h => (
+                                <option key={h.id} value={h.id}>{h.name} ({h.type})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 mb-2 font-bold">Urgency</label>
+                        <div className="flex gap-2">
+                            <button onClick={() => setTransferUrgency('STABLE')} className={`flex-1 py-2 text-xs border rounded-sm ${transferUrgency === 'STABLE' ? 'bg-green-50 border-green-500 text-green-700 font-bold' : 'bg-white border-slate-200'}`}>Stable</button>
+                            <button onClick={() => setTransferUrgency('IMMEDIATE')} className={`flex-1 py-2 text-xs border rounded-sm ${transferUrgency === 'IMMEDIATE' ? 'bg-red-50 border-red-500 text-red-700 font-bold' : 'bg-white border-slate-200'}`}>Immediate</button>
+                        </div>
+                    </div>
+                    <div className="flex gap-3 mt-4">
+                        <Button variant="secondary" onClick={() => setShowTransferModal(false)} className="flex-1">Cancel</Button>
+                        <Button variant="danger" onClick={submitTransferRequest} className="flex-1">Request Transfer</Button>
+                    </div>
+                </div>
+            </div>
+          </div>
       )}
 
       {/* QR Scan Modal */}

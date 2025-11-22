@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Patient, CriticalStatus } from '../types';
 import { Card, Badge, Button } from './ui_components';
@@ -154,7 +155,10 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
         <div className="flex justify-between items-start relative z-10">
            <div>
              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{authPatient.name}</h1>
-             <p className="text-slate-500 font-mono text-sm mt-1">ID: {authPatient.id}</p>
+             <div className="flex flex-col mt-1">
+               <span className="text-slate-500 font-mono text-xs">ID: {authPatient.id}</span>
+               <span className="text-slate-400 font-mono text-[10px] mt-0.5">GEO: {authPatient.geoHash}</span>
+             </div>
            </div>
            <div className="text-right">
              <div className="text-xs text-slate-400 uppercase font-bold">Blood Type</div>
@@ -288,14 +292,15 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                      <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                   </div>
                   <h3 className="text-xl font-bold text-slate-900 mb-2">Request Submitted</h3>
-                  <p className="text-sm text-slate-500 mb-4">
-                     Your appointment request for <span className="text-slate-900 font-mono font-bold">{apptDate}</span> has been sent to the clinic.
-                  </p>
-                  <div className="bg-slate-50 p-3 rounded border border-slate-200 text-xs text-slate-500 mb-6">
-                     Please check back later. A doctor must confirm this request before it is finalized.
+                  <div className="text-sm text-slate-600 mb-4 space-y-1">
+                     <p>Your appointment for <span className="font-bold">{apptDate}</span> has been sent.</p>
+                  </div>
+                  <div className="bg-amber-50 p-3 rounded border border-amber-200 text-xs text-amber-800 mb-6 text-left">
+                     <strong>Status: DOCTOR CONFIRMATION REQUIRED</strong><br/>
+                     This is a preliminary request. A medical professional must review urgency and availability before this appointment is confirmed. You will see a status update here.
                   </div>
                   <Button onClick={() => { setShowSuccessModal(false); setApptDate(''); setApptReason(''); }} className="w-full">
-                      Acknowledge
+                      Understood
                   </Button>
               </div>
           </div>

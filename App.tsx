@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Role, Patient, MeshState } from './types';
 import { PatientView } from './components/PatientView';
@@ -19,9 +20,18 @@ const IconWifi = () => (
   </svg>
 );
 
+const EmergencyBanner: React.FC<{ message: string; sender: string; severity: string }> = ({ message, sender, severity }) => (
+  <div className={`w-full px-4 py-2 flex items-center justify-center gap-2 font-bold uppercase tracking-wider text-xs text-white z-[100] animate-pulse ${
+    severity === 'critical' ? 'bg-red-600' : severity === 'warning' ? 'bg-orange-500' : 'bg-blue-600'
+  }`}>
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+      <span>EMERGENCY ALERT ({sender}): {message}</span>
+  </div>
+);
+
 const App: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<Role>(Role.DOCTOR); // Default to Doctor
-  const [meshState, setMeshState] = useState<MeshState>(getMeshState());
+  const [meshState, setMeshState] = useState<MeshState>(() => getMeshState());
 
   // Sync Simulation
   useEffect(() => {
@@ -49,8 +59,12 @@ const App: React.FC = () => {
     }
   };
 
+  const activeAlert = meshState.alerts && meshState.alerts.length > 0 ? meshState.alerts[0] : null;
+
  return (
-    <div className="min-h-screen bg-slate-50 text-slate-600 font-sans selection:bg-medical-100 selection:text-medical-900">
+    <div className="min-h-screen bg-slate-50 text-slate-600 font-sans selection:bg-medical-100 selection:text-medical-900 flex flex-col">
+      {activeAlert && <EmergencyBanner message={activeAlert.message} sender={activeAlert.senderName} severity={activeAlert.severity} />}
+
       {/* Top Navigation Bar */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -90,11 +104,11 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
         {renderContent()}
       </main>
 
-      <footer className="fixed bottom-0 w-full border-t border-slate-200 bg-white/90 backdrop-blur-sm text-[10px] text-slate-400 py-1.5 px-4 flex justify-between items-center z-50 font-mono">
+      <footer className="w-full border-t border-slate-200 bg-white/90 backdrop-blur-sm text-[10px] text-slate-400 py-1.5 px-4 flex justify-between items-center z-50 font-mono">
          <div className="flex items-center gap-2">
            <IconWifi />
            <span>MESH NODES: {meshState.connectedPeers}</span>

@@ -78,7 +78,7 @@ export interface SupplyStock {
 export interface SupplyRequest {
   id: string;
   itemId?: string; // Optional if generic resource type
-  resourceType?: string; // From CSV
+  resourceTypes: string[]; // Array for multi-select
   itemName: string;
   quantity: number;
   requester: string;
@@ -113,12 +113,13 @@ export interface PatientTransferRequest {
   patientId: string;
   patientName: string;
   currentHospitalId: string;
-  targetHospitalId?: string;
+  targetHospitalId?: string; // Final destination once approved
+  suggestedTargetHospitalId?: string; // Doctor's suggestion
   targetHospitalType?: string; // e.g. Needs "Surgery" or "Burn Unit"
   requesterId: string;
   reason: string;
   urgency: 'IMMEDIATE' | 'STABLE';
-  status: 'PENDING' | 'APPROVED' | 'IN_TRANSIT';
+  status: 'PENDING' | 'APPROVED' | 'IN_TRANSIT' | 'REJECTED';
   timestamp: string;
 }
 
@@ -133,6 +134,15 @@ export interface StaffMember {
   lastCheckIn: string;
 }
 
+export interface EmergencyAlert {
+  id: string;
+  message: string;
+  severity: 'info' | 'warning' | 'critical';
+  senderName: string;
+  timestamp: string;
+  active: boolean;
+}
+
 export interface MeshState {
   patients: Patient[];
   supplies: SupplyStock[];
@@ -141,6 +151,7 @@ export interface MeshState {
   supplyRequests: SupplyRequest[];
   transportRequests: TransportRequest[];
   transferRequests: PatientTransferRequest[];
+  alerts: EmergencyAlert[];
   connectedPeers: number;
   lastSync: string;
 }

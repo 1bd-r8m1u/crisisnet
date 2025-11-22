@@ -1,5 +1,5 @@
 
-import { MeshState, Patient, SupplyStock, CriticalStatus, StaffMember, StaffStatus, SupplyRequest, Hospital, TransportRequest, PatientTransferRequest } from "../types";
+import { MeshState, Patient, SupplyStock, CriticalStatus, StaffMember, StaffStatus, SupplyRequest, Hospital, TransportRequest, PatientTransferRequest, EmergencyAlert } from "../types";
 
 // --- AEGIS CSV DATA INTEGRATION ---
 
@@ -80,10 +80,10 @@ const REPORTS_CSV: SupplyStock[] = [
 ];
 
 const ORDERS_CSV: SupplyRequest[] = [
-  { id: 'O2000', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H100', severity: 'low', itemName: 'Request for Insulin', requiredByDate: '2025-11-22', resourceType: 'Insulin', quantity: 450, status: 'PENDING', timestamp: '2025-11-20T22:56:41' },
-  { id: 'O2001', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H103', severity: 'critical', itemName: 'Bandages (Mass Casualty)', requiredByDate: '2025-11-21', resourceType: 'Bandages', quantity: 276, status: 'IN_PROGRESS', timestamp: '2025-11-19T20:56:41' },
-  { id: 'O2002', requester: 'U011', requesterName: 'Dr. Jonah Eren', hospitalId: 'H104', targetHospitalId: 'H101', severity: 'medium', itemName: 'IV Fluids Dehydration', requiredByDate: '2025-11-23', resourceType: 'IV Fluids', quantity: 300, status: 'PENDING', timestamp: '2025-11-20T19:10:12' },
-  { id: 'O2003', requester: 'U007', requesterName: 'Dr. Haris Eldin', hospitalId: 'H102', targetHospitalId: 'H104', severity: 'low', itemName: 'Winter Antibiotics', requiredByDate: '2025-12-01', resourceType: 'Antibiotics', quantity: 150, status: 'PENDING', timestamp: '2025-11-18T11:30:44' },
+  { id: 'O2000', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H100', severity: 'low', itemName: 'Request for Insulin', requiredByDate: '2025-11-22', resourceTypes: ['Medicine'], quantity: 450, status: 'PENDING', timestamp: '2025-11-20T22:56:41' },
+  { id: 'O2001', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H103', severity: 'critical', itemName: 'Bandages (Mass Casualty)', requiredByDate: '2025-11-21', resourceTypes: ['Tools'], quantity: 276, status: 'IN_PROGRESS', timestamp: '2025-11-19T20:56:41' },
+  { id: 'O2002', requester: 'U011', requesterName: 'Dr. Jonah Eren', hospitalId: 'H104', targetHospitalId: 'H101', severity: 'medium', itemName: 'IV Fluids Dehydration', requiredByDate: '2025-11-23', resourceTypes: ['Medicine'], quantity: 300, status: 'PENDING', timestamp: '2025-11-20T19:10:12' },
+  { id: 'O2003', requester: 'U007', requesterName: 'Dr. Haris Eldin', hospitalId: 'H102', targetHospitalId: 'H104', severity: 'low', itemName: 'Winter Antibiotics', requiredByDate: '2025-12-01', resourceTypes: ['Medicine'], quantity: 150, status: 'PENDING', timestamp: '2025-11-18T11:30:44' },
 ];
 
 // --- LOGIC ---
@@ -140,7 +140,7 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
 });
 
 // Simulate local storage persistence - V8 to force fresh schema
-const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V8_3';
+const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V9_5';
 
 export const getMeshState = (): MeshState => {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -155,6 +155,7 @@ export const getMeshState = (): MeshState => {
     supplyRequests: ORDERS_CSV,
     transportRequests: [],
     transferRequests: [],
+    alerts: [],
     connectedPeers: Math.floor(Math.random() * 15) + 1,
     lastSync: new Date().toISOString()
   };
@@ -266,13 +267,28 @@ export const updateStaffStatus = (id: string, status: StaffStatus) => {
   }
 }
 
+export const broadcastEmergencyAlert = (message: string, severity: 'info' | 'warning' | 'critical', senderName: string) => {
+  const state = getMeshState();
+  const alert: EmergencyAlert = {
+    id: 'ALT-' + Math.random().toString(36).substr(2, 6),
+    message,
+    severity,
+    senderName,
+    timestamp: new Date().toISOString(),
+    active: true
+  };
+  // Limit to most recent 5 active alerts
+  state.alerts = [alert, ...state.alerts].slice(0, 5);
+  saveMeshState(state);
+}
+
 export const createSupplyRequest = (
   itemName: string, 
   quantity: number, 
   requester: string, 
   hospitalId: string,
   severity: 'low' | 'medium' | 'critical',
-  resourceType: string,
+  resourceTypes: string[],
   patientId?: string,
   patientName?: string,
   dateOverride?: string,
@@ -299,7 +315,7 @@ export const createSupplyRequest = (
     targetHospitalId: hospitalId, // Defaults to Internal/Self-targeted
     status: 'PENDING',
     severity,
-    resourceType,
+    resourceTypes,
     patientId,
     patientName,
     requiredByDate: requiredByDate.toISOString().split('T')[0],
@@ -329,59 +345,56 @@ export const updateSupplyRequest = (
     if (externalEntityName) req.externalEntityName = externalEntityName;
 
     // External Fulfillment Logic (NGOs)
-    // When fulfilled externally, we ADD to the requester's stock as if aid arrived
+    // "if given by an NGO, it will come in like how it works now" -> Adds to requester inventory
     if (status === 'FULFILLED_EXTERNAL') {
         const requesterStock = state.supplies.find(s => 
             s.hospitalId === req.hospitalId && 
-            (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+            (s.item === req.itemName || (req.resourceTypes && req.resourceTypes.some(rt => s.item.includes(rt))))
         );
 
         if (requesterStock) {
             requesterStock.quantity += req.quantity;
         } else {
-            // Create new stock entry if it doesn't exist
             state.supplies.push({
                 id: 'NGO-' + Math.random().toString(36).substr(2, 6),
                 hospitalId: req.hospitalId,
                 item: req.itemName,
-                category: 'TOOLS', // Default fallback
+                category: 'TOOLS', 
                 quantity: req.quantity,
                 unit: 'units',
                 criticalThreshold: 10 
             });
         }
-
        state.lastSync = new Date().toISOString();
        saveMeshState(state);
        return;
     }
 
-    // Stock transfer logic when approved internally
+    // Director Approval Logic (Local Inventory)
+    // "when the director of one clinic accepts a request locally, it comes out of their inventory"
     if (status === 'APPROVED') {
         const approver = state.staff.find(s => s.id === approverId);
-        
         if (approver) {
-            // 1. Decrement Stock from Approver's Hospital
+            // Decrement Stock from Approver's Hospital
             const providerStock = state.supplies.find(s => 
                 s.hospitalId === approver.hospitalId && 
-                (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+                (s.item === req.itemName || (req.resourceTypes && req.resourceTypes.some(rt => s.item.includes(rt))))
             );
             
             if (providerStock) {
                 providerStock.quantity = Math.max(0, providerStock.quantity - req.quantity);
             }
 
-            // 2. Increment Stock at Requester's Hospital (The Transfer)
+            // Only Increment Stock at Requester's Hospital if it's a transfer (different hospital)
             if (req.hospitalId !== approver.hospitalId) {
                 const existingStock = state.supplies.find(s => 
                     s.hospitalId === req.hospitalId && 
-                    (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+                    (s.item === req.itemName || (req.resourceTypes && req.resourceTypes.some(rt => s.item.includes(rt))))
                 );
 
                 if (existingStock) {
                     existingStock.quantity += req.quantity;
                 } else {
-                    // Create new stock entry if it doesn't exist
                     state.supplies.push({
                         id: 'NEW-' + Math.random().toString(36).substr(2, 6),
                         hospitalId: req.hospitalId,
@@ -389,7 +402,7 @@ export const updateSupplyRequest = (
                         category: providerStock?.category || 'TOOLS',
                         quantity: req.quantity,
                         unit: providerStock?.unit || 'units',
-                        criticalThreshold: 10 // Default
+                        criticalThreshold: 10
                     });
                 }
             }
@@ -450,7 +463,8 @@ export const requestPatientTransfer = (
   currentHospitalId: string,
   requesterId: string,
   urgency: 'IMMEDIATE' | 'STABLE',
-  reason: string
+  reason: string,
+  suggestedTargetHospitalId?: string
 ) => {
   const state = getMeshState();
   const newTransfer: PatientTransferRequest = {
@@ -462,6 +476,7 @@ export const requestPatientTransfer = (
     urgency,
     reason,
     status: 'PENDING',
+    suggestedTargetHospitalId,
     timestamp: new Date().toISOString()
   };
   state.transferRequests.unshift(newTransfer);
@@ -490,6 +505,16 @@ export const acceptPatientTransfer = (transferId: string, targetHospitalId: stri
       });
     }
     
+    state.lastSync = new Date().toISOString();
+    saveMeshState(state);
+  }
+}
+
+export const rejectPatientTransfer = (transferId: string) => {
+  const state = getMeshState();
+  const transfer = state.transferRequests.find(t => t.id === transferId);
+  if (transfer) {
+    transfer.status = 'REJECTED';
     state.lastSync = new Date().toISOString();
     saveMeshState(state);
   }
