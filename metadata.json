@@ -1,0 +1,8 @@
+{
+  "name": "CrisisNet: Federated Health",
+  "description": "A decentralized, offline-first medical record and coordination system for crisis zones. Connects patients, field doctors, and crisis directors via a simulated mesh network with AI-driven insights.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
