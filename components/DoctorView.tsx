@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Patient, MedicalRecord, CriticalStatus, SupplyStock, StaffMember, Hospital, StaffStatus } from '../types';
 import { Card, Button, Badge } from './ui_components';
-import { getMedicalAssistantResponse } from '../services/geminiService';
 import { updatePatient, createSupplyRequest, requestPatientTransfer, getMeshState, updateAppointment } from '../services/mockMesh';
+// @ts-ignore
+import jsQR from 'jsqr';
 
 interface DoctorViewProps {
   patients: Patient[];
@@ -24,9 +25,6 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const [availableStaff, setAvailableStaff] = useState<StaffMember[]>([]);
   
   // Clinical Entry State
-  const [symptoms, setSymptoms] = useState('');
-  const [aiAdvice, setAiAdvice] = useState<string>('');
-  const [aiLoading, setAiLoading] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [entryType, setEntryType] = useState<'NOTE' | 'PRESCRIPTION'>('NOTE');
   const [updateStatus, setUpdateStatus] = useState<CriticalStatus>(CriticalStatus.STABLE);
@@ -34,6 +32,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   // Supply Request State
   const [showSupplyModal, setShowSupplyModal] = useState(false);
   const [supplyItem, setSupplyItem] = useState('');
+  const [supplyResourceType, setSupplyResourceType] = useState('General');
   const [supplyQty, setSupplyQty] = useState(1);
   const [supplySeverity, setSupplySeverity] = useState<'low' | 'medium' | 'critical'>('low');
   const [supplyDate, setSupplyDate] = useState('');
@@ -50,6 +49,14 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const [newApptDate, setNewApptDate] = useState('');
   const [reassignDoctorId, setReassignDoctorId] = useState('');
   const [availableColleagues, setAvailableColleagues] = useState<StaffMember[]>([]);
+
+  // QR Scan State
+  const [showScanModal, setShowScanModal] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [cameraError, setCameraError] = useState('');
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     const state = getMeshState();
@@ -95,13 +102,83 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
     setSupplyDate(date.toISOString().split('T')[0]);
   }, [supplySeverity]);
 
-  const handleAiAssist = async () => {
-    if (!activePatient || !symptoms) return;
-    setAiLoading(true);
-    setAiAdvice('');
-    const advice = await getMedicalAssistantResponse(symptoms, activePatient);
-    setAiAdvice(advice);
-    setAiLoading(false);
+  // Camera Logic
+  useEffect(() => {
+      let animationFrameId: number;
+      
+      const tick = () => {
+          if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA && canvasRef.current) {
+              const canvas = canvasRef.current;
+              const video = videoRef.current;
+              const ctx = canvas.getContext('2d');
+              
+              if (ctx) {
+                  canvas.height = video.videoHeight;
+                  canvas.width = video.videoWidth;
+                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                  
+                  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                  const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                      inversionAttempts: "dontInvert",
+                  });
+
+                  if (code) {
+                      try {
+                          const data = JSON.parse(code.data);
+                          if (data && data.id) {
+                              handleQRSuccess(data.id);
+                          }
+                      } catch (e) {
+                          // Not JSON, maybe just ID string?
+                          handleQRSuccess(code.data);
+                      }
+                  }
+              }
+          }
+          animationFrameId = requestAnimationFrame(tick);
+      };
+
+      if (showScanModal) {
+          setCameraError('');
+          navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+              .then(stream => {
+                  streamRef.current = stream;
+                  if (videoRef.current) {
+                      videoRef.current.srcObject = stream;
+                      videoRef.current.setAttribute("playsinline", "true"); // required to tell iOS safari we don't want fullscreen
+                      videoRef.current.play();
+                      requestAnimationFrame(tick);
+                  }
+              })
+              .catch(err => {
+                  console.error(err);
+                  setCameraError("Camera access denied or unavailable.");
+              });
+      } else {
+         if (streamRef.current) {
+             streamRef.current.getTracks().forEach(track => track.stop());
+             streamRef.current = null;
+         }
+         if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      }
+
+      return () => {
+          if (streamRef.current) {
+              streamRef.current.getTracks().forEach(track => track.stop());
+          }
+          if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      }
+  }, [showScanModal]);
+
+  const handleQRSuccess = (idOrData: string) => {
+      const found = patients.find(p => p.id === idOrData || p.externalId === idOrData);
+      if (found) {
+          setSelectedPatientId(found.id);
+          setShowScanModal(false);
+      } else {
+         // Keep scanning or show error? For now just console log to avoid spamming alert in loop
+         console.log("Scanned ID not found in mesh:", idOrData);
+      }
   };
 
   const handleAddRecord = () => {
@@ -134,21 +211,57 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
 
   const submitSupplyRequest = () => {
     if (!currentUser) return;
+
+    // Client-side Validation
+    if (!supplyItem.trim()) {
+        alert("Error: Item Name cannot be empty.");
+        return;
+    }
+    if (isNaN(supplyQty) || supplyQty <= 0) {
+        alert("Error: Quantity must be a positive number.");
+        return;
+    }
+
     createSupplyRequest(
       supplyItem, 
       supplyQty, 
       currentUser.id, 
       currentUser.hospitalId, 
       supplySeverity,
+      supplyResourceType,
       (linkToPatient && activePatient) ? activePatient.id : undefined,
       (linkToPatient && activePatient) ? activePatient.name : undefined,
-      supplyDate
+      supplyDate,
+      currentUser.name
     );
     setShowSupplyModal(false);
     setSupplyItem('');
+    setSupplyResourceType('General');
     setSupplyQty(1);
-    alert("Supply request broadcasted to mesh.");
+    alert(`Request for ${supplyQty}x ${supplyItem} (${supplyResourceType}) logged.`);
   };
+
+  const handlePresetSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const val = e.target.value;
+      if (val === 'BLOOD_O') {
+          setSupplyItem('O- Negative Blood');
+          setSupplyResourceType('Blood');
+          setSupplySeverity('critical');
+      } else if (val === 'TRAUMA_KIT') {
+          setSupplyItem('Trauma Kit (Advanced)');
+          setSupplyResourceType('Tools');
+          setSupplySeverity('critical');
+      } else if (val === 'INSULIN') {
+          setSupplyItem('Insulin Vials');
+          setSupplyResourceType('Medicine');
+      } else if (val === 'ANTIBIOTICS') {
+          setSupplyItem('Broad Spectrum Antibiotics');
+          setSupplyResourceType('Medicine');
+      } else {
+          setSupplyResourceType('General');
+          setSupplyItem('');
+      }
+  }
 
   const submitTransferRequest = () => {
     if (!activePatient || !currentUser) return;
@@ -216,6 +329,11 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
       setSelectedAppt(null);
   }
 
+  const handleManualScan = () => {
+      handleQRSuccess(scanInput);
+      setScanInput('');
+  }
+
   const getStatusColor = (status: CriticalStatus) => {
     switch (status) {
       case CriticalStatus.CRITICAL: return 'text-red-500';
@@ -272,6 +390,15 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
 
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col relative">
+      
+      {/* CRITICAL PATIENT NOTIFICATION BANNER */}
+      {activePatient && activePatient.status === CriticalStatus.CRITICAL && (
+          <div className="w-full bg-red-600/20 border-b border-red-600/50 p-2 text-center text-red-200 text-sm font-bold animate-pulse flex items-center justify-center gap-2">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+              ATTENTION: Selected Patient {activePatient.name} is CRITICAL. Immediate intervention required.
+          </div>
+      )}
+
       {/* DOCTOR HEADER */}
       <div className="flex justify-between items-center mb-4 bg-slate-900/50 p-4 rounded-lg border border-slate-800">
          <div>
@@ -282,6 +409,10 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
             </div>
          </div>
          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowScanModal(true)} className="text-xs py-1.5 gap-2">
+               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg>
+               Scan QR
+            </Button>
             <Button variant="outline" onClick={() => setShowSupplyModal(true)} className="text-xs py-1.5">
                + Request Supplies
             </Button>
@@ -477,28 +608,6 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                         </div>
                     </div>
                   </Card>
-
-                  {/* AI Assist */}
-                  <Card title="AI Assistant" className="border-t-2 border-t-medical-500">
-                    <div className="flex gap-2 mb-3">
-                      <input 
-                        className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white placeholder-slate-600 focus:border-medical-500 outline-none text-xs"
-                        placeholder="Symptoms or query..."
-                        value={symptoms}
-                        onChange={(e) => setSymptoms(e.target.value)}
-                      />
-                      <Button onClick={handleAiAssist} disabled={!symptoms || aiLoading} className="text-xs px-3">
-                        {aiLoading ? '...' : 'Ask'}
-                      </Button>
-                    </div>
-                    {aiAdvice ? (
-                      <div className="bg-slate-900 p-3 rounded border border-medical-500/30 text-slate-300 text-xs leading-relaxed animate-fade-in">
-                        {aiAdvice}
-                      </div>
-                    ) : (
-                        <div className="text-[10px] text-slate-600 italic text-center pt-1">AI ready to assist with diagnosis.</div>
-                    )}
-                  </Card>
                 </div>
 
                 {/* RIGHT: HISTORY */}
@@ -575,9 +684,25 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                <h3 className="text-lg font-bold text-white mb-4 border-b border-slate-800 pb-2">Request Medical Supplies</h3>
                <div className="space-y-4">
                   <div>
+                     <label className="block text-xs text-slate-400 mb-1">Quick Select (Optional)</label>
+                     <select className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white text-sm focus:border-medical-500 outline-none mb-2"
+                        onChange={handlePresetSelect}>
+                        <option value="">-- Select Item Type --</option>
+                        <option value="BLOOD_O">🩸 O- Negative Blood</option>
+                        <option value="TRAUMA_KIT">🧰 Trauma Kit (Advanced)</option>
+                        <option value="INSULIN">💉 Insulin Vials</option>
+                        <option value="ANTIBIOTICS">💊 Antibiotics</option>
+                     </select>
+                  </div>
+                  <div>
                      <label className="block text-xs text-slate-400 mb-1">Item Name</label>
                      <input className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white text-sm focus:border-medical-500 outline-none" 
                         value={supplyItem} onChange={e => setSupplyItem(e.target.value)} placeholder="e.g. Epinephrine, Splints..." />
+                  </div>
+                  <div>
+                     <label className="block text-xs text-slate-400 mb-1">Resource Type</label>
+                     <input className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-white text-sm focus:border-medical-500 outline-none" 
+                        value={supplyResourceType} onChange={e => setSupplyResourceType(e.target.value)} placeholder="General, Medicine, Blood..." />
                   </div>
                   <div className="flex gap-4">
                      <div className="flex-1">
@@ -689,6 +814,55 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                      </div>
                  </div>
              </div>
+          </div>
+      )}
+      
+      {/* QR SCAN MODAL */}
+      {showScanModal && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+                  <div className="text-center mb-6">
+                      <div className="mx-auto w-16 h-16 bg-slate-800 rounded-xl border-2 border-dashed border-slate-600 flex items-center justify-center mb-4 relative overflow-hidden">
+                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-medical-500/20 to-transparent animate-pulse transform translate-y-full"></div>
+                          <svg className="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg>
+                      </div>
+                      <h3 className="text-lg font-bold text-white">Scan Patient QR</h3>
+                      <p className="text-xs text-slate-400 mt-1">Align camera with patient's device</p>
+                  </div>
+                  
+                  {/* CAMERA VIEWPORT */}
+                  <div className="relative w-full h-[250px] bg-black rounded overflow-hidden mb-4 border-2 border-slate-800">
+                      {!cameraError ? (
+                          <>
+                            <video ref={videoRef} className="w-full h-full object-cover" muted />
+                            <canvas ref={canvasRef} className="hidden" />
+                            <div className="absolute inset-0 border-2 border-medical-500/50 opacity-50 animate-pulse"></div>
+                          </>
+                      ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-red-400">
+                              <p className="text-xs">{cameraError}</p>
+                              <p className="text-[10px] text-slate-500 mt-1">Please check permissions</p>
+                          </div>
+                      )}
+                  </div>
+
+                  <div className="space-y-4">
+                      <div>
+                          <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Manual ID Entry</label>
+                          <input 
+                             className="w-full bg-slate-800 border border-slate-600 rounded p-3 text-center text-white font-mono text-lg outline-none focus:border-medical-500 placeholder-slate-600"
+                             placeholder="Scan or type ID..."
+                             value={scanInput}
+                             onChange={(e) => setScanInput(e.target.value)}
+                             onKeyDown={(e) => e.key === 'Enter' && handleManualScan()}
+                          />
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowScanModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleManualScan} className="flex-1">Manual Access</Button>
+                      </div>
+                  </div>
+              </div>
           </div>
       )}
 

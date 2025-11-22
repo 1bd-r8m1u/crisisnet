@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { MeshState, SupplyRequest, StaffMember, Hospital, PatientTransferRequest, StaffStatus } from '../types';
 import { Card, Button, Badge } from './ui_components';
-import { getMeshState, createSupplyRequest, updateSupplyRequest, acceptPatientTransfer, acceptTransportRequest, createTransportRequest, addStaffMember, updateStaffStatus } from '../services/mockMesh';
+import { getMeshState, createSupplyRequest, updateSupplyRequest, acceptPatientTransfer, acceptTransportRequest, createTransportRequest, addStaffMember, updateStaffStatus, getResourceTrends, broadcastSupplyRequest } from '../services/mockMesh';
 import {
   ScatterChart,
   Scatter,
@@ -15,7 +15,10 @@ import {
   BarChart,
   Bar,
   Legend,
-  LabelList
+  LabelList,
+  AreaChart,
+  Area,
+  CartesianGrid
 } from 'recharts';
 
 interface DirectorViewProps {
@@ -40,7 +43,8 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
   const [currentDirector, setCurrentDirector] = useState<StaffMember | null>(null);
   const [directors, setDirectors] = useState<StaffMember[]>([]);
   const [selectedHospital, setSelectedHospital] = useState<MapPoint | null>(null);
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'STAFF'>('DASHBOARD');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'STAFF' | 'HOSPITAL_DETAIL'>('DASHBOARD');
+  const [detailedHospitalId, setDetailedHospitalId] = useState<string | null>(null);
   
   // Modals
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
@@ -59,11 +63,14 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
   
   // Filter States
   const [resourceCategory, setResourceCategory] = useState<string>('ALL');
+  const [resourceScope, setResourceScope] = useState<string>('REGION'); // 'REGION' or specific Hospital ID
   const [refreshTick, setRefreshTick] = useState(0);
+  const [trendData, setTrendData] = useState<any[]>([]);
 
   useEffect(() => {
      const state = getMeshState();
      setDirectors(state.staff.filter(s => s.role === 'director'));
+     setTrendData(getResourceTrends());
   }, [refreshTick]);
 
   const forceRefresh = () => setRefreshTick(prev => prev + 1);
@@ -79,11 +86,17 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
     setSelectedHospital(null);
   };
 
-  const handleUpdateOrder = (id: string, status: 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS' | 'PENDING') => {
+  const handleUpdateOrder = (id: string, status: 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS' | 'PENDING' | 'FULFILLED_EXTERNAL', externalName?: string) => {
     if(!currentDirector) return;
-    updateSupplyRequest(id, status, currentDirector.id);
+    updateSupplyRequest(id, status, currentDirector.id, currentDirector.name, externalName);
     forceRefresh();
   };
+  
+  const handleBroadcastOrder = (id: string) => {
+      broadcastSupplyRequest(id);
+      forceRefresh();
+      alert("Request broadcasted to all mesh directors.");
+  }
 
   const handleAcceptTransfer = (transferId: string) => {
       if(!currentDirector) return;
@@ -135,6 +148,12 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
       updateStaffStatus(id, newStatus);
       forceRefresh();
   }
+
+  const viewHospitalDetails = (hospitalId: string) => {
+      setDetailedHospitalId(hospitalId);
+      setActiveTab('HOSPITAL_DETAIL');
+      setSelectedHospital(null);
+  };
 
   const getStaffName = (id: string) => {
       const s = meshState.staff.find(st => st.id === id);
@@ -195,20 +214,31 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
   const minY = Math.min(...mapData.map(d => d.y)) - 0.05;
   const maxY = Math.max(...mapData.map(d => d.y)) + 0.05;
 
-  // ORDERS
-  const incomingOrders = meshState.supplyRequests.filter(r => r.targetHospitalId === currentDirector.hospitalId && r.status === 'PENDING');
-  const outgoingOrders = meshState.supplyRequests.filter(r => r.requester === currentDirector.id);
-  const otherOrders = meshState.supplyRequests.filter(r => r.targetHospitalId !== currentDirector.hospitalId && r.requester !== currentDirector.id);
+  // ORDERS LOGIC
+  const incomingOrders = meshState.supplyRequests.filter(r => 
+      (r.targetHospitalId === currentDirector.hospitalId || r.targetHospitalId === 'BROADCAST') 
+      && r.status === 'PENDING'
+  );
+  
+  // History: Anything approved/fulfilled involving my hospital
+  const orderHistory = meshState.supplyRequests.filter(r => 
+      r.status !== 'PENDING' || (r.status === 'PENDING' && r.targetHospitalId !== currentDirector.hospitalId && r.targetHospitalId !== 'BROADCAST')
+  );
+  
   const transferQueue = meshState.transferRequests.filter(t => t.status === 'PENDING' && t.currentHospitalId !== currentDirector.hospitalId);
 
-  // CHARTS
-  const filteredSupplies = resourceCategory === 'ALL' 
-    ? meshState.supplies 
-    : meshState.supplies.filter(s => s.category === resourceCategory);
+  // CHARTS - AGGREGATION LOGIC
+  const filteredSupplies = meshState.supplies.filter(s => {
+      const matchesCategory = resourceCategory === 'ALL' || s.category === resourceCategory;
+      const matchesScope = resourceScope === 'REGION' || s.hospitalId === resourceScope;
+      return matchesCategory && matchesScope;
+  });
+
   const stockByItem = filteredSupplies.reduce((acc, s) => {
     acc[s.item] = (acc[s.item] || 0) + s.quantity;
     return acc;
   }, {} as Record<string, number>);
+  
   const chartData = Object.keys(stockByItem).slice(0, 8).map(k => ({ name: k, value: stockByItem[k] }));
 
   const staffChartData = meshState.hospitals.map(h => {
@@ -229,6 +259,12 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
     if (entry.unstable > 4) return '#f97316'; 
     return '#3b82f6'; 
   }
+
+  // Detailed View Data
+  const detailedHospital = detailedHospitalId ? meshState.hospitals.find(h => h.id === detailedHospitalId) : null;
+  const detailedPatients = detailedHospitalId ? meshState.patients.filter(p => p.hospitalId === detailedHospitalId) : [];
+  const detailedStaff = detailedHospitalId ? meshState.staff.filter(s => s.hospitalId === detailedHospitalId) : [];
+  const detailedStock = detailedHospitalId ? meshState.supplies.filter(s => s.hospitalId === detailedHospitalId) : [];
 
   return (
     <div className="space-y-6 animate-fade-in pb-20 relative">
@@ -257,8 +293,88 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
          </div>
       </div>
 
-      {activeTab === 'STAFF' ? (
-          <div className="space-y-6">
+      {/* VIEW LOGIC SWITCHER */}
+      {activeTab === 'HOSPITAL_DETAIL' && detailedHospital ? (
+         <div className="space-y-6 animate-fade-in">
+             <div className="flex items-center gap-4">
+                 <Button variant="secondary" onClick={() => setActiveTab('DASHBOARD')} className="text-xs">← Back to Dashboard</Button>
+                 <h2 className="text-2xl font-bold text-white">{detailedHospital.name} ({detailedHospital.id})</h2>
+                 <Badge>{detailedHospital.type}</Badge>
+             </div>
+
+             <div className="grid lg:grid-cols-3 gap-6">
+                 <div className="lg:col-span-1">
+                     <Card title="Hospital Status">
+                         <div className="grid grid-cols-2 gap-4 mb-6">
+                             <div className="bg-slate-800 p-3 rounded text-center border border-slate-700">
+                                <div className="text-2xl font-bold text-white">{detailedHospital.capacity}</div>
+                                <div className="text-[10px] text-slate-400 uppercase">Total Beds</div>
+                             </div>
+                             <div className="bg-slate-800 p-3 rounded text-center border border-slate-700">
+                                <div className="text-2xl font-bold text-white">{detailedPatients.length}</div>
+                                <div className="text-[10px] text-slate-400 uppercase">Current Patients</div>
+                             </div>
+                         </div>
+                         <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Medical Staff</h4>
+                         <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                             {detailedStaff.map(s => (
+                                 <div key={s.id} className="flex justify-between items-center bg-slate-800/50 p-2 rounded">
+                                     <div>
+                                         <div className="text-sm font-bold text-white">{s.name}</div>
+                                         <div className="text-[10px] text-slate-500 uppercase">{s.role}</div>
+                                     </div>
+                                     <Badge color={s.status === 'AVAILABLE' ? 'green' : 'red'}>{s.status}</Badge>
+                                 </div>
+                             ))}
+                         </div>
+                     </Card>
+                 </div>
+
+                 <div className="lg:col-span-1">
+                     <Card title="Patient Roster">
+                         <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
+                             {detailedPatients.map(p => (
+                                 <div key={p.id} className="p-3 bg-slate-800 border border-slate-700 rounded flex justify-between items-center">
+                                     <div>
+                                         <div className="text-sm font-bold text-white">{p.name}</div>
+                                         <div className="text-[10px] text-slate-400">{p.conditions.join(', ')}</div>
+                                     </div>
+                                     <div className={`text-xs font-bold ${
+                                         p.status === 'CRITICAL' ? 'text-red-500' : 
+                                         p.status === 'UNSTABLE' ? 'text-orange-500' : 'text-green-500'
+                                     }`}>
+                                         {p.status}
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     </Card>
+                 </div>
+
+                 <div className="lg:col-span-1">
+                     <Card title="Inventory">
+                         <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
+                             {detailedStock.map(s => (
+                                 <div key={s.id} className="flex justify-between items-center p-2 bg-slate-800 border border-slate-700 rounded">
+                                     <div>
+                                         <div className="text-sm font-bold text-white">{s.item}</div>
+                                         <div className="text-[10px] text-slate-500 uppercase">{s.category}</div>
+                                     </div>
+                                     <div className="text-right">
+                                         <div className={`text-sm font-bold font-mono ${s.quantity < s.criticalThreshold ? 'text-red-500' : 'text-white'}`}>
+                                             {s.quantity}
+                                         </div>
+                                         <div className="text-[10px] text-slate-500">{s.unit}</div>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     </Card>
+                 </div>
+             </div>
+         </div>
+      ) : activeTab === 'STAFF' ? (
+          <div className="space-y-6 animate-fade-in">
               <div className="flex justify-between items-center">
                   <h3 className="text-xl font-bold text-white">Hospital Personnel</h3>
                   <Button onClick={() => setShowAddStaffModal(true)} className="text-xs">
@@ -310,7 +426,7 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
       ) : (
         <>
           {/* DASHBOARD CONTENT */}
-          <div className="grid lg:grid-cols-3 gap-6">
+          <div className="grid lg:grid-cols-3 gap-6 animate-fade-in">
             <div className="lg:col-span-2 h-[450px] bg-slate-950 border border-slate-800 rounded-xl relative overflow-hidden shadow-xl group">
               {/* SATELLITE BACKGROUND */}
               <div className="absolute inset-0 bg-slate-900 z-0">
@@ -379,22 +495,34 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
             {/* RESOURCE OVERVIEW */}
             <div className="lg:col-span-1 flex flex-col gap-4">
               <Card 
-                title="Regional Resources" 
-                className="flex-1 flex flex-col"
+                title="Inventory Levels" 
+                className="flex-1 flex flex-col min-h-[250px]"
                 action={
-                  <select 
-                    className="bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1 outline-none focus:border-medical-500"
-                    value={resourceCategory}
-                    onChange={(e) => setResourceCategory(e.target.value)}
-                  >
-                    <option value="ALL">All Categories</option>
-                    <option value="MEDICINE">Medicine</option>
-                    <option value="TOOLS">Medical Supplies</option>
-                    <option value="BLOOD">Blood Bank</option>
-                  </select>
+                    <div className="flex gap-2">
+                        <select 
+                            className="bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1 outline-none focus:border-medical-500 max-w-[80px]"
+                            value={resourceScope}
+                            onChange={(e) => setResourceScope(e.target.value)}
+                        >
+                            <option value="REGION">Regional (All)</option>
+                            {meshState.hospitals.map(h => (
+                                <option key={h.id} value={h.id}>{h.id}</option>
+                            ))}
+                        </select>
+                        <select 
+                            className="bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1 outline-none focus:border-medical-500 max-w-[80px]"
+                            value={resourceCategory}
+                            onChange={(e) => setResourceCategory(e.target.value)}
+                        >
+                            <option value="ALL">All Types</option>
+                            <option value="MEDICINE">Meds</option>
+                            <option value="TOOLS">Supplies</option>
+                            <option value="BLOOD">Blood</option>
+                        </select>
+                    </div>
                 }
               >
-                  <div className="flex-1 min-h-[200px]">
+                  <div className="flex-1">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
                           <XAxis type="number" hide />
@@ -414,6 +542,32 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                           </Bar>
                       </BarChart>
                     </ResponsiveContainer>
+                  </div>
+              </Card>
+
+              {/* RESOURCE TREND CHART */}
+              <Card title="7-Day Consumption Trend" className="flex-1 min-h-[200px] flex flex-col">
+                  <div className="flex-1 text-xs">
+                     <ResponsiveContainer width="100%" height="100%">
+                         <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                             <defs>
+                                <linearGradient id="colorInsulin" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.8}/>
+                                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                                </linearGradient>
+                                <linearGradient id="colorBand" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/>
+                                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                                </linearGradient>
+                             </defs>
+                             <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                             <XAxis dataKey="day" stroke="#64748b" tick={{fontSize: 10}} />
+                             <YAxis stroke="#64748b" tick={{fontSize: 10}} />
+                             <Tooltip contentStyle={{backgroundColor: '#0f172a', borderColor: '#334155', color: '#fff', fontSize: '11px'}} />
+                             <Area type="monotone" dataKey="Insulin" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorInsulin)" strokeWidth={2} />
+                             <Area type="monotone" dataKey="Bandages" stroke="#22c55e" fillOpacity={1} fill="url(#colorBand)" strokeWidth={2} />
+                         </AreaChart>
+                     </ResponsiveContainer>
                   </div>
               </Card>
             </div>
@@ -451,38 +605,73 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                   </div>
                   ) : (
                   <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
-                      {incomingOrders.map(req => (
-                      <div key={req.id} className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 flex flex-col gap-3 transition-all hover:border-slate-500">
-                          <div>
-                              <div className="font-bold text-white text-sm flex items-center gap-2">
-                              {req.severity === 'critical' && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>}
-                              {req.itemName}
-                              </div>
-                              {req.patientName && (
-                                  <div className="text-xs bg-slate-800 p-1 rounded border border-slate-700 mt-1 text-blue-200 inline-block">
-                                      For Patient: {req.patientName}
+                      {incomingOrders.map(req => {
+                        const isBroadcast = req.targetHospitalId === 'BROADCAST';
+                        const isInternal = req.hospitalId === currentDirector.hospitalId;
+                        
+                        return (
+                          <div key={req.id} className={`bg-slate-800/50 p-4 rounded-lg border ${isBroadcast ? 'border-blue-500/50 bg-blue-900/10' : 'border-slate-700'} flex flex-col gap-3 transition-all hover:border-slate-500`}>
+                              <div>
+                                  <div className="flex justify-between items-start">
+                                      <div className="font-bold text-white text-sm flex items-center gap-2">
+                                          {req.severity === 'critical' && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>}
+                                          {req.itemName}
+                                      </div>
+                                      {isBroadcast && <Badge color="blue">Broadcast</Badge>}
                                   </div>
-                              )}
-                              <div className="text-xs text-slate-400 mt-1">
-                                  <span className="text-medical-400 font-mono">{getStaffName(req.requester)}</span> • Needs <span className="text-white font-bold">{req.quantity}</span> units
+                                  
+                                  {req.patientName && (
+                                      <div className="text-xs bg-slate-800 p-1 rounded border border-slate-700 mt-1 text-blue-200 inline-block">
+                                          For Patient: {req.patientName}
+                                      </div>
+                                  )}
+                                  <div className="text-xs text-slate-400 mt-1">
+                                      <span className="text-medical-400 font-mono">{req.requesterName || getStaffName(req.requester)}</span> • Needs <span className="text-white font-bold">{req.quantity}</span> units
+                                      <div className="text-[10px] text-slate-500 mt-0.5">Origin: {req.hospitalId}</div>
+                                  </div>
+                              </div>
+                              <div className="flex gap-2 w-full flex-wrap">
+                                  <Button 
+                                      className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-500 flex-1 whitespace-nowrap"
+                                      onClick={() => handleUpdateOrder(req.id, 'APPROVED')}
+                                  >
+                                      {isBroadcast ? 'Accept & Send' : 'Approve'}
+                                  </Button>
+                                  
+                                  {/* If internal request and not yet broadcasted, allow broadcast */}
+                                  {isInternal && !isBroadcast && (
+                                      <Button 
+                                          className="text-xs px-3 py-1.5 bg-blue-700 hover:bg-blue-600 flex-1"
+                                          onClick={() => handleBroadcastOrder(req.id)}
+                                      >
+                                          Broadcast
+                                      </Button>
+                                  )}
+
+                                  {/* If it is a broadcast, allow NGO Handover */}
+                                  {isBroadcast && (
+                                      <Button 
+                                          className="text-xs px-3 py-1.5 bg-purple-700 hover:bg-purple-600 flex-1 whitespace-nowrap"
+                                          // Fixed: Passed correct number of arguments to handleUpdateOrder (3 args)
+                                          onClick={() => handleUpdateOrder(req.id, 'FULFILLED_EXTERNAL', 'Intl. Aid Org')}
+                                      >
+                                          Delegate to NGO
+                                      </Button>
+                                  )}
+
+                                  {/* Only show decline for direct requests */}
+                                  {!isBroadcast && (
+                                      <Button 
+                                          className="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 flex-1"
+                                          onClick={() => handleUpdateOrder(req.id, 'PENDING')} // Logic should essentially archive it
+                                      >
+                                          Decline
+                                      </Button>
+                                  )}
                               </div>
                           </div>
-                          <div className="flex gap-2 w-full">
-                              <Button 
-                              className="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-500 flex-1"
-                              onClick={() => handleUpdateOrder(req.id, 'APPROVED')}
-                              >
-                              Approve
-                              </Button>
-                              <Button 
-                              className="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 flex-1"
-                              onClick={() => handleUpdateOrder(req.id, 'PENDING')}
-                              >
-                              Decline
-                              </Button>
-                          </div>
-                      </div>
-                      ))}
+                        );
+                      })}
                   </div>
                   )}
               </Card>
@@ -545,26 +734,59 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
             <div className="lg:col-span-1">
                 <Card title="Network Order Feed" className="h-full">
                     <div className="space-y-2 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
-                    {[...outgoingOrders, ...otherOrders].map(req => (
-                        <div key={req.id} className="flex justify-between items-center text-sm p-2 border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30 rounded">
-                            <div className="flex items-center gap-3">
-                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                    req.status === 'PENDING' ? 'bg-yellow-500' : 
-                                    req.status === 'APPROVED' ? 'bg-green-500' : 'bg-blue-500'
-                                }`}></span>
-                                <div className="flex flex-col">
-                                    <span className="text-slate-300 text-xs">{req.targetHospitalId} ➜ {req.itemName}</span>
-                                    <div className="text-[10px] text-slate-600 mt-0.5 flex flex-col">
-                                        <span>Req: <span className="text-slate-400">{getStaffName(req.requester)}</span></span>
-                                        {req.status === 'APPROVED' && req.approverId && (
-                                            <span className="text-green-400/70">Approved by: {getStaffName(req.approverId)}</span>
-                                        )}
+                    {[...orderHistory].map(req => {
+                        // Highlight Critical Items
+                        const isBlood = req.itemName.toLowerCase().includes('blood') || req.resourceType === 'Blood';
+                        const isTrauma = req.itemName.toLowerCase().includes('trauma') || req.resourceType === 'Tools';
+                        const isNGO = req.status === 'FULFILLED_EXTERNAL';
+                        
+                        return (
+                            <div key={req.id} className={`flex justify-between items-center text-sm p-2 border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30 rounded ${isBlood ? 'bg-red-950/20' : ''}`}>
+                                <div className="flex items-center gap-3">
+                                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                        req.status === 'PENDING' ? 'bg-yellow-500' : 
+                                        req.status === 'APPROVED' ? 'bg-green-500' : 
+                                        isNGO ? 'bg-purple-500' : 'bg-blue-500'
+                                    }`}></span>
+                                    
+                                    <div className="flex flex-col">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-slate-300 text-xs font-bold">
+                                                {req.hospitalId} <span className="text-slate-500">➜</span> {req.targetHospitalId === 'BROADCAST' ? 'NETWORK' : req.targetHospitalId}
+                                            </span>
+                                            {/* Critical Icons */}
+                                            {isBlood && <span title="Critical Blood Request">🩸</span>}
+                                            {isTrauma && <span title="Trauma Supplies">🧰</span>}
+                                        </div>
+                                        
+                                        <span className={`text-xs ${isBlood ? 'text-red-300 font-bold' : 'text-white'}`}>{req.itemName}</span>
+                                        
+                                        <div className="text-[10px] text-slate-500 mt-0.5 flex flex-col">
+                                            {req.resourceType && <span className="text-medical-500 uppercase text-[9px] tracking-wider">{req.resourceType}</span>}
+                                            
+                                            {/* Requester / Approver Trail */}
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                                <span>Req: {req.requesterName || getStaffName(req.requester)}</span>
+                                            </div>
+                                            {req.status === 'APPROVED' && (
+                                                <span className="text-green-400/70 flex items-center gap-1">
+                                                    ✓ Approved by: {req.approverName || (req.approverId ? getStaffName(req.approverId) : 'Unknown')}
+                                                </span>
+                                            )}
+                                            {isNGO && (
+                                                <span className="text-purple-400/70 flex items-center gap-1">
+                                                    🤝 Fulfilled by: {req.externalEntityName || 'External NGO'}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
+                                <Badge color={req.status === 'APPROVED' ? 'green' : isNGO ? 'teal' : 'yellow'}>
+                                    {isNGO ? 'NGO AID' : req.status}
+                                </Badge>
                             </div>
-                            <Badge color={req.status === 'APPROVED' ? 'green' : 'yellow'}>{req.status}</Badge>
-                        </div>
-                    ))}
+                        );
+                    })}
                     </div>
                     <div className="mt-4 pt-4 border-t border-slate-700">
                         <div className="flex gap-3">
@@ -642,7 +864,7 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
 
             <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Regional Command Actions</h4>
-                <Button className="w-full justify-center py-3" onClick={() => alert(`Full Details Report Generated for ${selectedHospital.name}`)}>
+                <Button className="w-full justify-center py-3" onClick={() => viewHospitalDetails(selectedHospital.id)}>
                     View Full Details
                 </Button>
                 <div className="grid grid-cols-2 gap-3">

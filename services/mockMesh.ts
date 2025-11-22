@@ -80,10 +80,10 @@ const REPORTS_CSV: SupplyStock[] = [
 ];
 
 const ORDERS_CSV: SupplyRequest[] = [
-  { id: 'O2000', requester: 'U009', hospitalId: 'H103', targetHospitalId: 'H100', severity: 'low', itemName: 'Request for Insulin', requiredByDate: '2025-11-22', resourceType: 'Insulin', quantity: 450, status: 'PENDING', timestamp: '2025-11-20T22:56:41' },
-  { id: 'O2001', requester: 'U009', hospitalId: 'H103', targetHospitalId: 'H103', severity: 'critical', itemName: 'Bandages (Mass Casualty)', requiredByDate: '2025-11-21', resourceType: 'Bandages', quantity: 276, status: 'IN_PROGRESS', timestamp: '2025-11-19T20:56:41' },
-  { id: 'O2002', requester: 'U011', hospitalId: 'H104', targetHospitalId: 'H101', severity: 'medium', itemName: 'IV Fluids Dehydration', requiredByDate: '2025-11-23', resourceType: 'IV Fluids', quantity: 300, status: 'PENDING', timestamp: '2025-11-20T19:10:12' },
-  { id: 'O2003', requester: 'U007', hospitalId: 'H102', targetHospitalId: 'H104', severity: 'low', itemName: 'Winter Antibiotics', requiredByDate: '2025-12-01', resourceType: 'Antibiotics', quantity: 150, status: 'PENDING', timestamp: '2025-11-18T11:30:44' },
+  { id: 'O2000', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H100', severity: 'low', itemName: 'Request for Insulin', requiredByDate: '2025-11-22', resourceType: 'Insulin', quantity: 450, status: 'PENDING', timestamp: '2025-11-20T22:56:41' },
+  { id: 'O2001', requester: 'U009', requesterName: 'Dr. Faiz Almas', hospitalId: 'H103', targetHospitalId: 'H103', severity: 'critical', itemName: 'Bandages (Mass Casualty)', requiredByDate: '2025-11-21', resourceType: 'Bandages', quantity: 276, status: 'IN_PROGRESS', timestamp: '2025-11-19T20:56:41' },
+  { id: 'O2002', requester: 'U011', requesterName: 'Dr. Jonah Eren', hospitalId: 'H104', targetHospitalId: 'H101', severity: 'medium', itemName: 'IV Fluids Dehydration', requiredByDate: '2025-11-23', resourceType: 'IV Fluids', quantity: 300, status: 'PENDING', timestamp: '2025-11-20T19:10:12' },
+  { id: 'O2003', requester: 'U007', requesterName: 'Dr. Haris Eldin', hospitalId: 'H102', targetHospitalId: 'H104', severity: 'low', itemName: 'Winter Antibiotics', requiredByDate: '2025-12-01', resourceType: 'Antibiotics', quantity: 150, status: 'PENDING', timestamp: '2025-11-18T11:30:44' },
 ];
 
 // --- LOGIC ---
@@ -125,7 +125,7 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
     assignedDoctorId: raw.docId,
     status: determineInitialStatus(raw.cond),
     lastUpdated: new Date(raw.last).toISOString(),
-    geoHash: 'simulated',
+    geoHash: Math.random().toString(36).substring(2, 8).toUpperCase(), // Random random GeoHash
     records: [
       {
         id: `rec-${raw.id}-1`,
@@ -140,7 +140,7 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
 });
 
 // Simulate local storage persistence - V8 to force fresh schema
-const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V8';
+const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V8_3';
 
 export const getMeshState = (): MeshState => {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -272,9 +272,11 @@ export const createSupplyRequest = (
   requester: string, 
   hospitalId: string,
   severity: 'low' | 'medium' | 'critical',
+  resourceType: string,
   patientId?: string,
   patientName?: string,
-  dateOverride?: string
+  dateOverride?: string,
+  requesterName?: string
 ) => {
   const state = getMeshState();
   
@@ -292,9 +294,12 @@ export const createSupplyRequest = (
     itemName,
     quantity,
     requester,
+    requesterName,
     hospitalId,
+    targetHospitalId: hospitalId, // Defaults to Internal/Self-targeted
     status: 'PENDING',
     severity,
+    resourceType,
     patientId,
     patientName,
     requiredByDate: requiredByDate.toISOString().split('T')[0],
@@ -308,20 +313,86 @@ export const createSupplyRequest = (
 
 export const updateSupplyRequest = (
     requestId: string, 
-    status: 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS' | 'PENDING',
-    approverId?: string
+    status: 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS' | 'PENDING' | 'FULFILLED_EXTERNAL',
+    approverId?: string,
+    approverName?: string,
+    externalEntityName?: string
 ) => {
   const state = getMeshState();
   const index = state.supplyRequests.findIndex(r => r.id === requestId);
+  
   if (index !== -1) {
     const req = state.supplyRequests[index];
     req.status = status;
     if (approverId) req.approverId = approverId;
+    if (approverName) req.approverName = approverName;
+    if (externalEntityName) req.externalEntityName = externalEntityName;
 
-    if (status === 'APPROVED' && req.targetHospitalId) {
-        const stockItem = state.supplies.find(s => s.hospitalId === req.targetHospitalId && (s.item === req.itemName || s.category === req.resourceType));
-        if (stockItem) {
-            stockItem.quantity = Math.max(0, stockItem.quantity - req.quantity);
+    // External Fulfillment Logic (NGOs)
+    // When fulfilled externally, we ADD to the requester's stock as if aid arrived
+    if (status === 'FULFILLED_EXTERNAL') {
+        const requesterStock = state.supplies.find(s => 
+            s.hospitalId === req.hospitalId && 
+            (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+        );
+
+        if (requesterStock) {
+            requesterStock.quantity += req.quantity;
+        } else {
+            // Create new stock entry if it doesn't exist
+            state.supplies.push({
+                id: 'NGO-' + Math.random().toString(36).substr(2, 6),
+                hospitalId: req.hospitalId,
+                item: req.itemName,
+                category: 'TOOLS', // Default fallback
+                quantity: req.quantity,
+                unit: 'units',
+                criticalThreshold: 10 
+            });
+        }
+
+       state.lastSync = new Date().toISOString();
+       saveMeshState(state);
+       return;
+    }
+
+    // Stock transfer logic when approved internally
+    if (status === 'APPROVED') {
+        const approver = state.staff.find(s => s.id === approverId);
+        
+        if (approver) {
+            // 1. Decrement Stock from Approver's Hospital
+            const providerStock = state.supplies.find(s => 
+                s.hospitalId === approver.hospitalId && 
+                (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+            );
+            
+            if (providerStock) {
+                providerStock.quantity = Math.max(0, providerStock.quantity - req.quantity);
+            }
+
+            // 2. Increment Stock at Requester's Hospital (The Transfer)
+            if (req.hospitalId !== approver.hospitalId) {
+                const existingStock = state.supplies.find(s => 
+                    s.hospitalId === req.hospitalId && 
+                    (s.item === req.itemName || s.item.includes(req.resourceType || ''))
+                );
+
+                if (existingStock) {
+                    existingStock.quantity += req.quantity;
+                } else {
+                    // Create new stock entry if it doesn't exist
+                    state.supplies.push({
+                        id: 'NEW-' + Math.random().toString(36).substr(2, 6),
+                        hospitalId: req.hospitalId,
+                        item: req.itemName,
+                        category: providerStock?.category || 'TOOLS',
+                        quantity: req.quantity,
+                        unit: providerStock?.unit || 'units',
+                        criticalThreshold: 10 // Default
+                    });
+                }
+            }
         }
     }
 
@@ -329,6 +400,17 @@ export const updateSupplyRequest = (
     saveMeshState(state);
   }
 };
+
+export const broadcastSupplyRequest = (requestId: string) => {
+  const state = getMeshState();
+  const req = state.supplyRequests.find(r => r.id === requestId);
+  if (req) {
+    req.targetHospitalId = 'BROADCAST';
+    req.status = 'PENDING'; // Reset status to pending so others can pick it up
+    state.lastSync = new Date().toISOString();
+    saveMeshState(state);
+  }
+}
 
 export const createTransportRequest = (
   requesterId: string, 
@@ -412,3 +494,14 @@ export const acceptPatientTransfer = (transferId: string, targetHospitalId: stri
     saveMeshState(state);
   }
 }
+
+// Mock data generator for resource trends
+export const getResourceTrends = () => {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return days.map(day => ({
+    day,
+    Insulin: Math.floor(Math.random() * 200) + 300,
+    Bandages: Math.floor(Math.random() * 150) + 100,
+    Antibiotics: Math.floor(Math.random() * 300) + 200,
+  }));
+};

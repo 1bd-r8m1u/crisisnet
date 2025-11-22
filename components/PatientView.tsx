@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Patient, CriticalStatus } from '../types';
 import { Card, Badge, Button } from './ui_components';
 import { generatePatientId, bookAppointment, addPatientCondition } from '../services/mockMesh';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface PatientViewProps {
   patients: Patient[];
@@ -38,12 +39,16 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
 
   // Appointment Modal State
   const [showApptModal, setShowApptModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [apptDate, setApptDate] = useState('');
   const [apptReason, setApptReason] = useState('');
 
   // Condition Modal State
   const [showCondModal, setShowCondModal] = useState(false);
   const [newCondition, setNewCondition] = useState('');
+  
+  // QR Modal State
+  const [showQRModal, setShowQRModal] = useState(false);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,10 +70,8 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
   const handleBookAppointment = () => {
       if (!authPatient) return;
       bookAppointment(authPatient.id, apptReason, apptDate);
-      alert("Appointment Requested. Awaiting Doctor Confirmation.");
       setShowApptModal(false);
-      setApptReason('');
-      setApptDate('');
+      setShowSuccessModal(true);
   };
 
   const handleAddCondition = () => {
@@ -179,12 +182,15 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
       </div>
 
       {/* QUICK ACTIONS */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="grid grid-cols-3 gap-3 mb-6">
           <Button onClick={() => setShowApptModal(true)} className="text-xs py-3 bg-slate-800 border border-slate-700 hover:border-medical-500">
-             📅 Book Appointment
+             📅 Book Appt
           </Button>
           <Button onClick={() => setShowCondModal(true)} className="text-xs py-3 bg-slate-800 border border-slate-700 hover:border-medical-500">
-             📝 Report Condition
+             📝 Report
+          </Button>
+          <Button onClick={() => setShowQRModal(true)} className="text-xs py-3 bg-slate-800 border border-slate-700 hover:border-medical-500">
+             📱 Show QR
           </Button>
       </div>
 
@@ -277,6 +283,27 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
           </div>
       )}
 
+      {/* SUCCESS MODAL */}
+      {showSuccessModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <div className="bg-slate-900 border border-medical-500 rounded-xl p-6 w-full max-w-sm text-center shadow-[0_0_30px_rgba(14,165,233,0.3)]">
+                  <div className="w-16 h-16 bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-500/50">
+                     <svg className="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Request Submitted</h3>
+                  <p className="text-sm text-slate-400 mb-4">
+                     Your appointment request for <span className="text-medical-400 font-mono font-bold">{apptDate}</span> has been sent to the clinic.
+                  </p>
+                  <div className="bg-slate-800 p-3 rounded text-xs text-slate-500 mb-6">
+                     Please check back later. A doctor must confirm this request before it is finalized.
+                  </div>
+                  <Button onClick={() => { setShowSuccessModal(false); setApptDate(''); setApptReason(''); }} className="w-full">
+                      Acknowledge
+                  </Button>
+              </div>
+          </div>
+      )}
+
       {showCondModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
               <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm">
@@ -295,6 +322,38 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                           <Button onClick={handleAddCondition} className="flex-1">Submit</Button>
                       </div>
                   </div>
+              </div>
+          </div>
+      )}
+
+      {showQRModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <div className="bg-white rounded-xl p-6 w-full max-w-sm flex flex-col items-center shadow-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">Your Medical ID</h3>
+                  <p className="text-xs text-slate-500 mb-6">Scan to share full medical history</p>
+                  
+                  <div className="bg-white p-2 rounded-lg border-2 border-slate-900 mb-4">
+                      {/* Encoding patient data including ID for quick lookup by doctor */}
+                      <QRCodeSVG 
+                          value={JSON.stringify({
+                              id: authPatient.id,
+                              name: authPatient.name,
+                              blood: authPatient.bloodType,
+                              allergies: authPatient.allergies,
+                              conditions: authPatient.conditions,
+                              geoHash: authPatient.geoHash
+                          })} 
+                          size={200} 
+                          level="M" 
+                      />
+                  </div>
+
+                  <div className="text-center mb-6">
+                    <div className="font-mono text-sm font-bold text-slate-900 tracking-wider">{authPatient.id}</div>
+                    <div className="text-[10px] text-slate-500 font-mono mt-1">GeoHash: {authPatient.geoHash}</div>
+                  </div>
+                  
+                  <Button onClick={() => setShowQRModal(false)} className="w-full">Close</Button>
               </div>
           </div>
       )}

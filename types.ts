@@ -82,12 +82,15 @@ export interface SupplyRequest {
   itemName: string;
   quantity: number;
   requester: string;
+  requesterName?: string; // Snapshot of name
   hospitalId: string; // Origin hospital
   targetHospitalId?: string;
   approverId?: string; // Director who approved it
+  approverName?: string; // Snapshot of name
+  externalEntityName?: string; // If fulfilled by NGO
   patientId?: string; // Optional link to specific patient
   patientName?: string;
-  status: 'PENDING' | 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS';
+  status: 'PENDING' | 'APPROVED' | 'FULFILLED' | 'IN_PROGRESS' | 'FULFILLED_EXTERNAL';
   severity: 'low' | 'medium' | 'critical';
   requiredByDate: string;
   timestamp: string;

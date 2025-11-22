@@ -13,7 +13,8 @@
     "react": "^19.2.0",
     "recharts": "^3.4.1",
     "react-dom": "^19.2.0",
-    "qrcode.react": "^4.2.0"
+    "qrcode.react": "^4.2.0",
+    "jsqr": "1.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
