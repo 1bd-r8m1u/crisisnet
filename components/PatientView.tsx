@@ -141,7 +141,9 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
 
   const playVoiceNote = (text: string) => {
       if ('speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(text);
+          window.speechSynthesis.cancel(); // Stop previous
+          const cleanText = text.replace('Voice Note: ', '');
+          const utterance = new SpeechSynthesisUtterance(cleanText);
           window.speechSynthesis.speak(utterance);
       } else {
           alert("Audio playback not supported on this device.");
@@ -349,15 +351,24 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
       <div className="space-y-3 mb-8">
         {authPatient.records.map((rec, idx) => (
           <div key={rec.id} className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
-             <div className="flex justify-between mb-2">
-                <span className={`text-xs font-bold px-2 py-0.5 rounded border ${
-                  rec.type === 'APPOINTMENT' ? 'bg-purple-50 text-purple-700 border-purple-200' : 
-                  rec.type === 'PRESCRIPTION' ? 'bg-green-50 text-green-700 border-green-200' : 
-                  'bg-slate-100 text-slate-600 border-slate-200'
-                }`}>
-                  {rec.type}
-                </span>
-                <span className="text-xs text-slate-400 font-mono">{new Date(rec.date).toLocaleDateString()}</span>
+             <div className="flex justify-between items-center mb-2">
+                <div className="flex gap-2">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded border ${
+                    rec.type === 'APPOINTMENT' ? 'bg-purple-50 text-purple-700 border-purple-200' : 
+                    rec.type === 'PRESCRIPTION' ? 'bg-green-50 text-green-700 border-green-200' : 
+                    'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
+                    {rec.type}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono mt-0.5">{new Date(rec.date).toLocaleDateString()}</span>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); playVoiceNote(rec.description); }} 
+                  className="text-slate-400 hover:text-medical-600 transition-colors p-1"
+                  title="Read Aloud"
+                >
+                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                </button>
              </div>
              <p className="text-slate-700 text-sm leading-relaxed">{rec.description}</p>
              {rec.type === 'AUDIO_NOTE' && (
@@ -365,7 +376,7 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                      <button onClick={() => playVoiceNote(rec.description.replace('Voice Note: ', ''))} className="bg-blue-600 text-white rounded-full p-2 hover:bg-blue-700">
                         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                      </button>
-                     <span className="text-xs font-bold text-slate-500 uppercase">Play Voice Note from Dr. {rec.doctorName}</span>
+                     <span className="text-xs font-bold text-slate-500 uppercase">Play Recording</span>
                  </div>
              )}
              <div className="mt-3 flex items-center gap-2 text-xs text-slate-400 border-t border-slate-100 pt-2">
