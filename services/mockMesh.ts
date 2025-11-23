@@ -1,5 +1,4 @@
-
-import { MeshState, Patient, SupplyStock, CriticalStatus, StaffMember, StaffStatus, SupplyRequest, Hospital, TransportRequest, PatientTransferRequest, EmergencyAlert } from "../types";
+import { MeshState, Patient, SupplyStock, CriticalStatus, StaffMember, StaffStatus, SupplyRequest, Hospital, TransportRequest, PatientTransferRequest, EmergencyAlert, MedicalRecord } from "../types";
 
 // --- AEGIS CSV DATA INTEGRATION ---
 
@@ -11,7 +10,17 @@ const HOSPITALS_CSV: Hospital[] = [
   { id: 'H104', name: 'St. Brigid Outreach', province: 'Mountain Province', type: 'Outreach', capacity: 54, coordinates: { lat: 31.291331, lng: 34.24155 } },
 ];
 
-const USERS_CSV: StaffMember[] = [
+const getHospitalCoords = (id: string) => {
+    const h = HOSPITALS_CSV.find(hos => hos.id === id);
+    if (!h) return { lat: 31.0, lng: 34.0 };
+    // Add jitter
+    return {
+        lat: h.coordinates.lat + (Math.random() * 0.005 - 0.0025),
+        lng: h.coordinates.lng + (Math.random() * 0.005 - 0.0025)
+    };
+};
+
+const USERS_CSV: StaffMember[] = ([
   { id: 'U001', name: 'Dr. Alia Kareem', role: 'director', hospitalId: 'H100', email: 'alia.kareem@h100.org', phone: '+1004668136', status: StaffStatus.AVAILABLE, lastCheckIn: new Date().toISOString() },
   { id: 'U002', name: 'Dr. Amin Sufyan', role: 'doctor', hospitalId: 'H100', email: 'amin.sufyan@h100.org', phone: '+1004903402', status: StaffStatus.BUSY, lastCheckIn: new Date().toISOString() },
   { id: 'U003', name: 'Dr. Lina Qadir', role: 'doctor', hospitalId: 'H100', email: 'lina.qadir@h100.org', phone: '+1009478454', status: StaffStatus.AVAILABLE, lastCheckIn: new Date().toISOString() },
@@ -24,7 +33,10 @@ const USERS_CSV: StaffMember[] = [
   { id: 'U010', name: 'Dr. Reem Alawi', role: 'doctor', hospitalId: 'H103', email: 'reem.alawi@h103.org', phone: '+1005667231', status: StaffStatus.BUSY, lastCheckIn: new Date().toISOString() },
   { id: 'U011', name: 'Dr. Jonah Eren', role: 'director', hospitalId: 'H104', email: 'jonah.eren@h104.org', phone: '+1004223104', status: StaffStatus.AVAILABLE, lastCheckIn: new Date().toISOString() },
   { id: 'U012', name: 'Dr. Sia Farah', role: 'doctor', hospitalId: 'H104', email: 'sia.farah@h104.org', phone: '+1009011330', status: StaffStatus.AVAILABLE, lastCheckIn: new Date().toISOString() },
-];
+] as Omit<StaffMember, 'coordinates'>[]).map(u => ({
+    ...u,
+    coordinates: u.status === StaffStatus.UNREACHABLE ? undefined : getHospitalCoords(u.hospitalId)
+}));
 
 // Raw Patient Data from CSV
 const PATIENTS_RAW = [
@@ -112,8 +124,9 @@ const determineInitialStatus = (conds: string[]): CriticalStatus => {
 
 const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
   const simulatedDob = generateSimulatedDOB(index);
-  const randomLat = 31.2 + (Math.random() * 0.4); 
-  const randomLng = 34.1 + (Math.random() * 0.5);
+  const hCoords = getHospitalCoords(raw.hospitalId);
+  const randomLat = hCoords.lat + (Math.random() * 0.005 - 0.0025);
+  const randomLng = hCoords.lng + (Math.random() * 0.005 - 0.0025);
 
   return {
     id: generatePatientId(raw.name, simulatedDob), // Internal deterministic ID
@@ -143,8 +156,8 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
   };
 });
 
-// Simulate local storage persistence - V8 to force fresh schema
-const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V10_1';
+// Simulate local storage persistence - V13 to force fresh schema
+const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V14_0';
 
 export const getMeshState = (): MeshState => {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -181,6 +194,87 @@ export const updatePatient = (patient: Patient) => {
   }
   state.lastSync = new Date().toISOString();
   saveMeshState(state);
+};
+
+export const createPatient = (name: string, dob: string, blood: string, allergies: string[], hospitalId: string = 'UNKNOWN') => {
+  const state = getMeshState();
+  const id = generatePatientId(name, dob);
+  // Check existence
+  if (state.patients.find(p => p.id === id)) return { success: false, message: 'Patient ID already exists.'};
+  
+  // Find valid hospital
+  const validHospital = state.hospitals.find(h => h.id === hospitalId) ? hospitalId : (state.hospitals[0]?.id || 'UNKNOWN');
+  const hCoords = getHospitalCoords(validHospital);
+
+  const newPatient: Patient = {
+      id,
+      externalId: 'P' + Math.floor(Math.random() * 9000 + 1000),
+      name,
+      dateOfBirth: dob,
+      bloodType: blood,
+      allergies: allergies,
+      conditions: [],
+      activePrescriptions: [],
+      hospitalId: validHospital,
+      assignedDoctorId: 'PENDING',
+      status: CriticalStatus.STABLE,
+      lastUpdated: new Date().toISOString(),
+      geoHash: Math.random().toString(36).substring(2, 8).toUpperCase(),
+      geoLocation: { 
+          lat: hCoords.lat + (Math.random() * 0.005 - 0.0025), 
+          lng: hCoords.lng + (Math.random() * 0.005 - 0.0025) 
+      },
+      records: [{
+          id: 'INIT-' + Math.random().toString(36).substr(2,6),
+          date: new Date().toISOString(),
+          type: 'NOTE',
+          description: 'Patient account created.',
+          doctorName: 'System',
+          location: 'Remote'
+      }]
+  };
+  state.patients.push(newPatient);
+  saveMeshState(state);
+  return { success: true, patient: newPatient };
+};
+
+export const registerNewHospital = (name: string, type: string, province: string, lat: number, lng: number) => {
+    const state = getMeshState();
+    const newId = 'H' + (105 + state.hospitals.length);
+    const newHospital: Hospital = {
+        id: newId,
+        name,
+        type,
+        province,
+        capacity: 50, // Default start
+        coordinates: { lat, lng }
+    };
+    state.hospitals.push(newHospital);
+    saveMeshState(state);
+    return newHospital;
+};
+
+export const updatePatientProfile = (id: string, bloodType: string, allergies: string[]) => {
+    const state = getMeshState();
+    const patient = state.patients.find(p => p.id === id);
+    if (patient) {
+        patient.bloodType = bloodType;
+        patient.allergies = allergies;
+        patient.lastUpdated = new Date().toISOString();
+        saveMeshState(state);
+        return true;
+    }
+    return false;
+};
+
+export const assignPatientToDoctor = (patientId: string, doctorId: string, hospitalId: string) => {
+    const state = getMeshState();
+    const patient = state.patients.find(p => p.id === patientId);
+    if (patient) {
+        patient.assignedDoctorId = doctorId;
+        patient.hospitalId = hospitalId;
+        saveMeshState(state);
+    }
 };
 
 export const bookAppointment = (patientId: string, reason: string, requestedDate: string) => {
@@ -255,6 +349,15 @@ export const addPatientCondition = (patientId: string, condition: string) => {
   }
 };
 
+export const addMedicalRecord = (patientId: string, record: MedicalRecord) => {
+    const state = getMeshState();
+    const patient = state.patients.find(p => p.id === patientId);
+    if (patient) {
+        patient.records.unshift(record);
+        saveMeshState(state);
+    }
+};
+
 export const addStaffMember = (member: StaffMember) => {
   const state = getMeshState();
   state.staff.push(member);
@@ -267,6 +370,15 @@ export const updateStaffStatus = (id: string, status: StaffStatus) => {
   if (staff) {
     staff.status = status;
     staff.lastCheckIn = new Date().toISOString();
+    
+    // GeoTag Logic
+    if (status === StaffStatus.UNREACHABLE) {
+        delete staff.coordinates;
+    } else if (!staff.coordinates) {
+        // Re-establish signal based on hospital location
+        staff.coordinates = getHospitalCoords(staff.hospitalId);
+    }
+    
     saveMeshState(state);
   }
 }
@@ -290,7 +402,7 @@ export const createSupplyRequest = (
   itemName: string, 
   quantity: number, 
   requester: string, 
-  hospitalId: string,
+  hospitalId: string, 
   severity: 'low' | 'medium' | 'critical',
   resourceTypes: string[],
   patientId?: string,
@@ -349,7 +461,6 @@ export const updateSupplyRequest = (
     if (externalEntityName) req.externalEntityName = externalEntityName;
 
     // External Fulfillment Logic (NGOs)
-    // "if given by an NGO, it will come in like how it works now" -> Adds to requester inventory
     if (status === 'FULFILLED_EXTERNAL') {
         const requesterStock = state.supplies.find(s => 
             s.hospitalId === req.hospitalId && 
@@ -375,11 +486,9 @@ export const updateSupplyRequest = (
     }
 
     // Director Approval Logic (Local Inventory)
-    // "when the director of one clinic accepts a request locally, it comes out of their inventory"
     if (status === 'APPROVED') {
         const approver = state.staff.find(s => s.id === approverId);
         if (approver) {
-            // Decrement Stock from Approver's Hospital
             const providerStock = state.supplies.find(s => 
                 s.hospitalId === approver.hospitalId && 
                 (s.item === req.itemName || (req.resourceTypes && req.resourceTypes.some(rt => s.item.includes(rt))))
@@ -389,7 +498,6 @@ export const updateSupplyRequest = (
                 providerStock.quantity = Math.max(0, providerStock.quantity - req.quantity);
             }
 
-            // Only Increment Stock at Requester's Hospital if it's a transfer (different hospital)
             if (req.hospitalId !== approver.hospitalId) {
                 const existingStock = state.supplies.find(s => 
                     s.hospitalId === req.hospitalId && 
@@ -423,7 +531,7 @@ export const broadcastSupplyRequest = (requestId: string) => {
   const req = state.supplyRequests.find(r => r.id === requestId);
   if (req) {
     req.targetHospitalId = 'BROADCAST';
-    req.status = 'PENDING'; // Reset status to pending so others can pick it up
+    req.status = 'PENDING';
     state.lastSync = new Date().toISOString();
     saveMeshState(state);
   }
@@ -499,6 +607,14 @@ export const acceptPatientTransfer = (transferId: string, targetHospitalId: stri
       const oldHospital = patient.hospitalId;
       patient.hospitalId = targetHospitalId;
       
+      const targetHosp = state.hospitals.find(h => h.id === targetHospitalId);
+      if (targetHosp) {
+          patient.geoLocation = {
+              lat: targetHosp.coordinates.lat + (Math.random() * 0.005 - 0.0025),
+              lng: targetHosp.coordinates.lng + (Math.random() * 0.005 - 0.0025)
+          };
+      }
+
       patient.records.unshift({
         id: Math.random().toString(36).substr(2, 9),
         date: new Date().toISOString(),
@@ -524,7 +640,6 @@ export const rejectPatientTransfer = (transferId: string) => {
   }
 }
 
-// Mock data generator for resource trends
 export const getResourceTrends = () => {
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   return days.map(day => ({

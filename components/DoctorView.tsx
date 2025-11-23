@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Patient, MedicalRecord, CriticalStatus, SupplyStock, StaffMember, Hospital, StaffStatus } from '../types';
 import { Card, Button, Badge } from './ui_components';
-import { updatePatient, createSupplyRequest, requestPatientTransfer, getMeshState, updateAppointment, updateStaffStatus } from '../services/mockMesh';
+import { updatePatient, createSupplyRequest, requestPatientTransfer, getMeshState, updateAppointment, updateStaffStatus, createPatient, assignPatientToDoctor, addMedicalRecord } from '../services/mockMesh';
 // @ts-ignore
 import jsQR from 'jsqr';
 
@@ -29,6 +29,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const [newNote, setNewNote] = useState('');
   const [entryType, setEntryType] = useState<'NOTE' | 'PRESCRIPTION'>('NOTE');
   const [updateStatus, setUpdateStatus] = useState<CriticalStatus>(CriticalStatus.STABLE);
+  const [isRecording, setIsRecording] = useState(false);
 
   // Supply Request State
   const [showSupplyModal, setShowSupplyModal] = useState(false);
@@ -58,10 +59,18 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   // QR Scan State
   const [showScanModal, setShowScanModal] = useState(false);
   const [scanInput, setScanInput] = useState('');
+  const [scanError, setScanError] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cameraError, setCameraError] = useState('');
   const streamRef = useRef<MediaStream | null>(null);
+  const [scannedPatient, setScannedPatient] = useState<Patient | null>(null);
+
+  // Patient Creation
+  const [showCreatePatientModal, setShowCreatePatientModal] = useState(false);
+  const [newPatientName, setNewPatientName] = useState('');
+  const [newPatientDob, setNewPatientDob] = useState('');
+  const [newPatientBlood, setNewPatientBlood] = useState('O+');
 
   useEffect(() => {
     const state = getMeshState();
@@ -120,12 +129,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                   const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
                   if (code) {
-                      try {
-                          const data = JSON.parse(code.data);
-                          if (data && data.id) handleQRSuccess(data.id);
-                      } catch (e) {
-                          handleQRSuccess(code.data);
-                      }
+                      handleQRSuccess(code.data);
                   }
               }
           }
@@ -134,6 +138,9 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
 
       if (showScanModal) {
           setCameraError('');
+          setScanError('');
+          setScannedPatient(null);
+          setScanInput('');
           navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
               .then(stream => {
                   streamRef.current = stream;
@@ -163,14 +170,56 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   }, [showScanModal]);
 
   const handleQRSuccess = (idOrData: string) => {
-      const found = patients.find(p => p.id === idOrData || p.externalId === idOrData);
-      if (found) {
-          setSelectedPatientId(found.id);
-          setShowScanModal(false);
-      } else {
-         console.log("Scanned ID not found in mesh:", idOrData);
+      let targetId = idOrData;
+      setScanError('');
+      
+      // Attempt to parse JSON if the QR contains the full object
+      try {
+          const data = JSON.parse(idOrData);
+          if (data && data.id) {
+              targetId = data.id;
+          }
+      } catch (e) {
+          // It's likely a raw ID string, use as is
+          targetId = idOrData;
       }
+
+      // Check current props first (for react updates), then check mesh state directly for newly registered patients
+      let found = patients.find(p => p.id === targetId || p.externalId === targetId);
+      if (!found) {
+          // Fallback to direct mesh state check for very new patients
+          const state = getMeshState();
+          found = state.patients.find(p => p.id === targetId || p.externalId === targetId);
+      }
+
+      if (found) {
+          setScannedPatient(found);
+          // Stop scanning once found
+          if (streamRef.current) {
+              streamRef.current.getTracks().forEach(track => track.stop());
+          }
+      } 
   };
+
+  const confirmScannedPatient = () => {
+      if (scannedPatient) {
+          setSelectedPatientId(scannedPatient.id);
+          setShowScanModal(false);
+          setScannedPatient(null);
+      }
+  }
+
+  const handleAssignFromScan = () => {
+      if (scannedPatient && currentUser) {
+          assignPatientToDoctor(scannedPatient.id, currentUser.id, currentUser.hospitalId);
+          onDataUpdate();
+          
+          // Optimistically update status for UI
+          setScannedPatient({...scannedPatient, assignedDoctorId: currentUser.id, hospitalId: currentUser.hospitalId});
+          
+          alert(`${scannedPatient.name} has been added to your current patients list.`);
+      }
+  }
 
   const handleAddRecord = () => {
     if (!activePatient || !newNote || !currentUser) return;
@@ -183,10 +232,13 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
       location: currentHospital?.name || 'Field'
     };
     
+    addMedicalRecord(activePatient.id, newRecord);
+    // Update status/meds if needed locally for immediate reflect
     const updatedPrescriptions = entryType === 'PRESCRIPTION' 
       ? [...activePatient.activePrescriptions, newNote.split(' - ')[0]]
       : activePatient.activePrescriptions;
-
+    
+    // Full update requires merging state logic, using mockMesh helper for cleaner separation
     const updatedPatient = {
       ...activePatient,
       records: [newRecord, ...activePatient.records],
@@ -198,6 +250,53 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
     setNewNote('');
     onDataUpdate();
   };
+
+  const handleRecordVoice = () => {
+      if (!isRecording) {
+          setIsRecording(true);
+      } else {
+          // Simulate saving
+          if (!activePatient || !currentUser) return;
+          setIsRecording(false);
+          const newRecord: MedicalRecord = {
+            id: Math.random().toString(36).substr(2, 9),
+            date: new Date().toISOString(),
+            type: 'AUDIO_NOTE',
+            description: `Voice Note: Recorded by ${currentUser.name}`,
+            doctorName: currentUser.name,
+            location: currentHospital?.name || 'Field',
+            audioUrl: 'mock-audio.mp3'
+          };
+          addMedicalRecord(activePatient.id, newRecord);
+          onDataUpdate();
+          alert("Voice note saved.");
+      }
+  }
+
+  const handleCreatePatient = () => {
+      if (!newPatientName || !newPatientDob) return;
+      // Default to current hospital
+      const res = createPatient(newPatientName, newPatientDob, newPatientBlood, [], currentUser?.hospitalId);
+      if (res.success && res.patient) {
+          if (currentUser) {
+              assignPatientToDoctor(res.patient.id, currentUser.id, currentUser.hospitalId);
+          }
+          onDataUpdate();
+          setSelectedPatientId(res.patient.id);
+          setShowCreatePatientModal(false);
+          alert(`Patient Created.\n\nPERMANENT ID: ${res.patient.id}\n\nPlease record this ID for the patient.`);
+      } else {
+          alert(res.message);
+      }
+  }
+
+  const handleAssignToMe = () => {
+      if (activePatient && currentUser) {
+          assignPatientToDoctor(activePatient.id, currentUser.id, currentUser.hospitalId);
+          onDataUpdate();
+          alert("Patient added to your list.");
+      }
+  }
 
   const submitSupplyRequest = () => {
     if (!currentUser) return;
@@ -273,8 +372,26 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   }
 
   const handleManualScan = () => {
-      handleQRSuccess(scanInput);
-      setScanInput('');
+      if(!scanInput.trim()) return;
+      // Strip whitespace and uppercase for consistency
+      const input = scanInput.trim().toUpperCase();
+      
+      // Try local props first
+      let found = patients.find(p => p.id === input || p.externalId === input);
+      
+      // Fallback to mesh state for very new records
+      if (!found) {
+           const state = getMeshState();
+           found = state.patients.find(p => p.id === input || p.externalId === input);
+      }
+      
+      if(found) {
+          handleQRSuccess(input);
+          setScanInput('');
+          setScanError('');
+      } else {
+          setScanError('Patient ID not found in mesh.');
+      }
   }
 
   const handleStatusChange = (newStatus: StaffStatus) => {
@@ -423,6 +540,12 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                   Bookings ({pendingAppointments.length})
               </button>
           </div>
+          
+          {activeTab === 'PATIENTS' && (
+             <Button onClick={() => setShowCreatePatientModal(true)} variant="secondary" className="w-full text-xs border-dashed border-slate-300">
+                 + Create New Patient
+             </Button>
+          )}
 
           <Card title={activeTab === 'PATIENTS' ? "Patient Directory" : "Pending Requests"} className="flex-1 flex flex-col min-h-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
@@ -473,13 +596,16 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                 <div className="mb-4 sm:mb-0">
                   <h1 className="text-2xl font-bold text-slate-900">{activePatient.name}</h1>
-                  <div className="flex flex-wrap gap-2 text-xs text-slate-500 mt-2 font-mono">
-                    <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200">ID: {activePatient.externalId}</span>
+                  <div className="flex flex-wrap gap-2 text-xs text-slate-500 mt-2 font-mono items-center">
+                    <span className="bg-medical-50 text-medical-800 px-3 py-1 rounded border border-medical-200 font-bold text-sm tracking-widest">{activePatient.id}</span>
                     <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200">DOB: {activePatient.dateOfBirth}</span>
                     <span className="bg-red-50 px-2 py-1 rounded border border-red-100 text-red-700">Blood: {activePatient.bloodType}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
+                   {activePatient.assignedDoctorId !== currentUser.id && (
+                       <Button variant="secondary" className="text-xs" onClick={handleAssignToMe}>+ Add to My List</Button>
+                   )}
                    <Button variant="danger" className="text-xs px-3 py-2 bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 hover:text-red-800" onClick={() => setShowTransferModal(true)}>
                      🚑 Transfer
                    </Button>
@@ -510,10 +636,15 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                             </div>
                         </div>
                         <textarea className="w-full bg-white border border-slate-300 rounded-sm p-3 text-slate-800 focus:border-medical-500 outline-none min-h-[100px] text-sm resize-none placeholder-slate-400" placeholder="Enter details..." value={newNote} onChange={(e) => setNewNote(e.target.value)}></textarea>
-                        <div className="flex justify-end">
-                        <Button onClick={handleAddRecord} disabled={!newNote} className="text-xs">
-                            {entryType === 'PRESCRIPTION' ? 'Prescribe & Update' : 'Log Observation'}
-                        </Button>
+                        
+                        <div className="flex justify-between items-center">
+                            <button onClick={handleRecordVoice} className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded border ${isRecording ? 'bg-red-100 text-red-700 border-red-200 animate-pulse' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                <span className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-600' : 'bg-slate-400'}`}></span>
+                                {isRecording ? 'Recording...' : 'Record Voice Note'}
+                            </button>
+                            <Button onClick={handleAddRecord} disabled={!newNote} className="text-xs">
+                                {entryType === 'PRESCRIPTION' ? 'Prescribe & Update' : 'Log Observation'}
+                            </Button>
                         </div>
                     </div>
                   </Card>
@@ -523,12 +654,13 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                   <div className="space-y-6 pl-2">
                     {activePatient.records.map((rec, i) => {
                         const isPrescription = rec.type === 'PRESCRIPTION' || rec.type === 'TREATMENT';
+                        const isAudio = rec.type === 'AUDIO_NOTE';
                         return (
                             <div key={rec.id} className="relative pl-6 border-l-2 border-slate-200 pb-2 group">
-                                <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${isPrescription ? 'bg-green-500' : 'bg-slate-400'}`}></div>
+                                <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${isPrescription ? 'bg-green-500' : isAudio ? 'bg-blue-500' : 'bg-slate-400'}`}></div>
                                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2">
                                     <div className="flex items-center gap-2">
-                                        <Badge color={isPrescription ? 'green' : 'gray'}>{rec.type}</Badge>
+                                        <Badge color={isPrescription ? 'green' : isAudio ? 'blue' : 'gray'}>{rec.type}</Badge>
                                         <span className="text-xs font-bold text-slate-700">{rec.doctorName}</span>
                                     </div>
                                     <span className="text-xs text-slate-400 font-mono mt-1 sm:mt-0">
@@ -537,6 +669,7 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                                 </div>
                                 <div className="p-3 rounded-sm text-sm leading-relaxed border bg-white border-slate-200 text-slate-600 shadow-sm">
                                     {isPrescription && <span className="mr-2">💊</span>}
+                                    {isAudio && <span className="mr-2">🎤</span>}
                                     {rec.description}
                                 </div>
                             </div>
@@ -698,20 +831,76 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
                   <div className="text-center mb-6">
                       <h3 className="text-lg font-bold text-slate-900">Scan Patient QR</h3>
                   </div>
-                  <div className="relative w-full h-[250px] bg-black rounded overflow-hidden mb-4 border-2 border-slate-300">
-                      {!cameraError ? (
-                          <>
-                            <video ref={videoRef} className="w-full h-full object-cover" muted />
-                            <canvas ref={canvasRef} className="hidden" />
-                          </>
-                      ) : (
-                          <div className="flex items-center justify-center h-full text-white text-xs">{cameraError}</div>
-                      )}
-                  </div>
-                  <input className="w-full bg-white border border-slate-300 rounded-sm p-3 text-center text-slate-900 font-mono outline-none" placeholder="Manual ID..." value={scanInput} onChange={(e) => setScanInput(e.target.value)} />
-                  <div className="flex gap-3 mt-4">
-                      <Button variant="secondary" onClick={() => setShowScanModal(false)} className="flex-1">Cancel</Button>
-                      <Button onClick={handleManualScan} className="flex-1">Verify</Button>
+                  {!scannedPatient ? (
+                      <>
+                        <div className="relative w-full h-[250px] bg-black rounded overflow-hidden mb-4 border-2 border-slate-300">
+                            {!cameraError ? (
+                                <>
+                                    <video ref={videoRef} className="w-full h-full object-cover" muted />
+                                    <canvas ref={canvasRef} className="hidden" />
+                                </>
+                            ) : (
+                                <div className="flex items-center justify-center h-full text-white text-xs">{cameraError}</div>
+                            )}
+                        </div>
+                        
+                        <div className="flex items-center gap-3 my-4">
+                            <div className="h-px bg-slate-200 flex-1"></div>
+                            <span className="text-xs text-slate-400 font-bold uppercase">OR</span>
+                            <div className="h-px bg-slate-200 flex-1"></div>
+                        </div>
+
+                        <div className="space-y-2">
+                             <label className="text-xs font-bold text-slate-500">Manual Entry (Failed Scan?)</label>
+                             <div className="flex gap-2">
+                                <input className="w-full bg-white border border-slate-300 rounded-sm p-2 text-slate-900 font-mono outline-none text-sm placeholder-slate-400 uppercase" placeholder="Enter ID (e.g. KHALED-1970...)" value={scanInput} onChange={(e) => setScanInput(e.target.value)} />
+                                <Button onClick={handleManualScan} className="bg-slate-700 text-white hover:bg-slate-800">Verify</Button>
+                             </div>
+                             {scanError && <p className="text-xs text-red-500 font-bold text-center animate-pulse">{scanError}</p>}
+                        </div>
+
+                        <div className="flex gap-3 mt-6">
+                            <Button variant="secondary" onClick={() => setShowScanModal(false)} className="w-full">Cancel</Button>
+                        </div>
+                      </>
+                  ) : (
+                      <div className="space-y-4 animate-fade-in">
+                          <div className="bg-slate-50 border border-slate-200 p-4 rounded text-center">
+                              <h4 className="font-bold text-lg text-slate-900">{scannedPatient.name}</h4>
+                              <p className="font-mono text-xs text-slate-500 mb-2">{scannedPatient.id}</p>
+                              <Badge color={scannedPatient.status === 'CRITICAL' ? 'red' : 'green'}>{scannedPatient.status}</Badge>
+                          </div>
+                          <p className="text-sm text-center text-slate-600">Patient detected in mesh.</p>
+                          <div className="flex flex-col gap-2">
+                              <Button onClick={confirmScannedPatient} className="w-full">Access Records</Button>
+                              {scannedPatient.assignedDoctorId !== currentUser.id && (
+                                 <Button variant="secondary" onClick={handleAssignFromScan} className="w-full border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100">
+                                     + Add to My List
+                                 </Button>
+                              )}
+                              <Button variant="outline" onClick={() => { setScannedPatient(null); setShowScanModal(false); }} className="w-full">Cancel</Button>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+
+      {/* Create Patient Modal */}
+      {showCreatePatientModal && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4">Create New Patient Record</h3>
+                  <div className="space-y-4">
+                      <input type="text" placeholder="Full Name" className="w-full border p-2 rounded" value={newPatientName} onChange={e => setNewPatientName(e.target.value)} />
+                      <input type="date" className="w-full border p-2 rounded" value={newPatientDob} onChange={e => setNewPatientDob(e.target.value)} />
+                      <select className="w-full border p-2 rounded" value={newPatientBlood} onChange={e => setNewPatientBlood(e.target.value)}>
+                          {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(b => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowCreatePatientModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleCreatePatient} className="flex-1">Create & Open</Button>
+                      </div>
                   </div>
               </div>
           </div>

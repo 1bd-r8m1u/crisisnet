@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
-import { Patient, CriticalStatus } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Patient, CriticalStatus, Hospital } from '../types';
 import { Card, Badge, Button } from './ui_components';
-import { generatePatientId, bookAppointment, addPatientCondition } from '../services/mockMesh';
+import { generatePatientId, bookAppointment, addPatientCondition, createPatient, updatePatientProfile, getMeshState } from '../services/mockMesh';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface PatientViewProps {
@@ -36,6 +36,20 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
   const [loginName, setLoginName] = useState('');
   const [loginDob, setLoginDob] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  
+  // Registration Form State
+  const [regName, setRegName] = useState('');
+  const [regDob, setRegDob] = useState('');
+  const [regBlood, setRegBlood] = useState('O+');
+  const [regAllergies, setRegAllergies] = useState('');
+  const [regHospitalId, setRegHospitalId] = useState('');
+
+  // Edit Profile State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editBlood, setEditBlood] = useState('');
+  const [editAllergies, setEditAllergies] = useState('');
 
   // Appointment Modal State
   const [showApptModal, setShowApptModal] = useState(false);
@@ -50,6 +64,12 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
   // QR Modal State
   const [showQRModal, setShowQRModal] = useState(false);
 
+  useEffect(() => {
+     const state = getMeshState();
+     setHospitals(state.hospitals);
+     if (state.hospitals.length > 0) setRegHospitalId(state.hospitals[0].id);
+  }, []);
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -63,6 +83,44 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
     } else {
       console.log("Attempted ID:", generatedId);
       setLoginError('Patient record not found. Please check exact spelling and date.');
+    }
+  };
+
+  const handleRegister = (e: React.FormEvent) => {
+      e.preventDefault();
+      const allergiesArr = regAllergies.split(',').map(s => s.trim()).filter(s => s);
+      const res = createPatient(regName, regDob, regBlood, allergiesArr, regHospitalId);
+      if (res.success && res.patient) {
+          setAuthPatient(res.patient);
+          setIsRegistering(false);
+          alert("Medical Packet Created Successfully. Your ID is: " + res.patient.id);
+      } else {
+          setLoginError(res.message || 'Error creating account.');
+      }
+  }
+
+  const handleEditProfile = () => {
+    if (!authPatient) return;
+    setEditBlood(authPatient.bloodType);
+    setEditAllergies(authPatient.allergies.join(', '));
+    setShowEditModal(true);
+  };
+
+  const submitEditProfile = () => {
+    if (!authPatient) return;
+    const allergiesArr = editAllergies.split(',').map(s => s.trim()).filter(s => s);
+    const success = updatePatientProfile(authPatient.id, editBlood, allergiesArr);
+    if (success) {
+      // Optimistic update locally
+      setAuthPatient({
+        ...authPatient,
+        bloodType: editBlood,
+        allergies: allergiesArr
+      });
+      setShowEditModal(false);
+      alert("Profile updated successfully.");
+    } else {
+      alert("Error updating profile.");
     }
   };
 
@@ -81,6 +139,15 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
       setNewCondition('');
   };
 
+  const playVoiceNote = (text: string) => {
+      if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance(text);
+          window.speechSynthesis.speak(utterance);
+      } else {
+          alert("Audio playback not supported on this device.");
+      }
+  };
+
   if (!authPatient) {
     return (
       <div className="max-w-md mx-auto mt-10 px-4">
@@ -89,54 +156,99 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
           <p className="text-slate-500">Secure Medical Digital Packet</p>
         </div>
         
-        <Card className="border-t-4 border-t-medical-500 shadow-xl">
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-              <input 
-                type="text" 
-                required
-                className="w-full bg-white border border-slate-300 rounded-sm px-4 py-3 text-slate-900 placeholder-slate-400 focus:border-medical-500 focus:ring-1 focus:ring-medical-500 outline-none transition-colors"
-                placeholder="e.g. Khaled Saar"
-                value={loginName}
-                onChange={(e) => setLoginName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Date of Birth</label>
-              <input 
-                type="date" 
-                required
-                className="w-full bg-white border border-slate-300 rounded-sm px-4 py-3 text-slate-900 placeholder-slate-400 focus:border-medical-500 focus:ring-1 focus:ring-medical-500 outline-none transition-colors"
-                value={loginDob}
-                onChange={(e) => setLoginDob(e.target.value)}
-              />
-            </div>
-            
-            {loginError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-sm text-red-700 text-sm text-center">
-                {loginError}
-              </div>
-            )}
-            
-            <div className="bg-slate-50 p-3 rounded border border-slate-200 text-xs text-slate-500 mb-4">
-               <p className="font-bold mb-2 uppercase tracking-wider text-slate-700">Tap to autofill demo user:</p>
-               <div className="flex flex-col gap-2">
-                  <button type="button" onClick={() => { setLoginName('Khaled Saar'); setLoginDob('1970-01-01'); }} className="bg-white border border-slate-200 px-3 py-2 rounded-sm hover:border-medical-300 text-left flex justify-between items-center transition-colors">
-                    <span className="font-bold text-slate-700">Khaled Saar</span>
-                    <span className="font-mono text-slate-400">1970-01-01</span>
-                  </button>
-                  <button type="button" onClick={() => { setLoginName('Mira Joud'); setLoginDob('2007-08-14'); }} className="bg-white border border-slate-200 px-3 py-2 rounded-sm hover:border-medical-300 text-left flex justify-between items-center transition-colors">
-                    <span className="font-bold text-slate-700">Mira Joud</span>
-                    <span className="font-mono text-slate-400">2007-08-14</span>
-                  </button>
-               </div>
-            </div>
+        <Card className="border-t-4 border-t-medical-500 shadow-xl transition-all">
+          {isRegistering ? (
+             <form onSubmit={handleRegister} className="space-y-4">
+                 <h3 className="font-bold text-slate-900">Create New Account</h3>
+                 <div className="bg-yellow-50 p-3 rounded border border-yellow-200 text-xs text-yellow-800">
+                    A permanent unique ID will be generated for you upon creation.
+                 </div>
+                 <div>
+                    <label className="text-xs font-bold text-slate-500">Full Name</label>
+                    <input type="text" required placeholder="Full Name" className="w-full border p-2 rounded" value={regName} onChange={e => setRegName(e.target.value)} />
+                 </div>
+                 <div>
+                    <label className="text-xs font-bold text-slate-500">Date of Birth</label>
+                    <input type="date" required className="w-full border p-2 rounded" value={regDob} onChange={e => setRegDob(e.target.value)} />
+                 </div>
+                 <div>
+                     <label className="text-xs font-bold text-slate-500">Nearest Clinic</label>
+                     <select className="w-full border p-2 rounded text-sm" value={regHospitalId} onChange={e => setRegHospitalId(e.target.value)}>
+                         {hospitals.map(h => <option key={h.id} value={h.id}>{h.name} ({h.province})</option>)}
+                     </select>
+                 </div>
+                 <div className="grid grid-cols-2 gap-2">
+                     <div>
+                        <label className="text-xs font-bold text-slate-500">Blood Type</label>
+                        <select className="w-full border p-2 rounded" value={regBlood} onChange={e => setRegBlood(e.target.value)}>
+                            {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold text-slate-500">Allergies</label>
+                        <input type="text" placeholder="Comma separated" className="w-full border p-2 rounded" value={regAllergies} onChange={e => setRegAllergies(e.target.value)} />
+                     </div>
+                 </div>
+                 
+                 <div className="flex gap-2 pt-2">
+                     <Button type="button" variant="secondary" onClick={() => setIsRegistering(false)} className="flex-1">Cancel</Button>
+                     <Button type="submit" className="flex-1">Create Packet</Button>
+                 </div>
+             </form>
+          ) : (
+             <form onSubmit={handleLogin} className="space-y-6">
+                <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                <input 
+                    type="text" 
+                    required
+                    className="w-full bg-white border border-slate-300 rounded-sm px-4 py-3 text-slate-900 placeholder-slate-400 focus:border-medical-500 focus:ring-1 focus:ring-medical-500 outline-none transition-colors"
+                    placeholder="e.g. Khaled Saar"
+                    value={loginName}
+                    onChange={(e) => setLoginName(e.target.value)}
+                />
+                </div>
+                <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Date of Birth</label>
+                <input 
+                    type="date" 
+                    required
+                    className="w-full bg-white border border-slate-300 rounded-sm px-4 py-3 text-slate-900 placeholder-slate-400 focus:border-medical-500 focus:ring-1 focus:ring-medical-500 outline-none transition-colors"
+                    value={loginDob}
+                    onChange={(e) => setLoginDob(e.target.value)}
+                />
+                </div>
+                
+                {loginError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-sm text-red-700 text-sm text-center">
+                    {loginError}
+                </div>
+                )}
+                
+                <div className="bg-slate-50 p-3 rounded border border-slate-200 text-xs text-slate-500 mb-4">
+                <p className="font-bold mb-2 uppercase tracking-wider text-slate-700">Tap to autofill demo user:</p>
+                <div className="flex flex-col gap-2">
+                    <button type="button" onClick={() => { setLoginName('Khaled Saar'); setLoginDob('1970-01-01'); }} className="bg-white border border-slate-200 px-3 py-2 rounded-sm hover:border-medical-300 text-left flex justify-between items-center transition-colors">
+                        <span className="font-bold text-slate-700">Khaled Saar</span>
+                        <span className="font-mono text-slate-400">1970-01-01</span>
+                    </button>
+                    <button type="button" onClick={() => { setLoginName('Mira Joud'); setLoginDob('2007-08-14'); }} className="bg-white border border-slate-200 px-3 py-2 rounded-sm hover:border-medical-300 text-left flex justify-between items-center transition-colors">
+                        <span className="font-bold text-slate-700">Mira Joud</span>
+                        <span className="font-mono text-slate-400">2007-08-14</span>
+                    </button>
+                </div>
+                </div>
 
-            <Button type="submit" className="w-full py-3 text-lg shadow-lg">
-              Open Medical Packet
-            </Button>
-          </form>
+                <div className="space-y-3">
+                    <Button type="submit" className="w-full py-3 text-lg shadow-lg">
+                    Open Medical Packet
+                    </Button>
+                    <button type="button" onClick={() => setIsRegistering(true)} className="w-full text-sm text-medical-600 font-bold hover:underline">
+                        First time? Create a Medical Packet
+                    </button>
+                </div>
+            </form>
+          )}
         </Card>
       </div>
     );
@@ -155,10 +267,11 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
         <div className="flex justify-between items-start relative z-10">
            <div>
              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{authPatient.name}</h1>
-             <div className="flex flex-col mt-1">
-               <span className="text-slate-500 font-mono text-xs">ID: {authPatient.id}</span>
-               <span className="text-slate-400 font-mono text-[10px] mt-0.5">GEO: {authPatient.geoHash}</span>
+             <div className="mt-2 inline-block bg-blue-50 border border-blue-200 rounded px-2 py-1">
+                <span className="text-[10px] text-blue-500 font-bold uppercase mr-2">MESH ID</span>
+                <span className="text-blue-900 font-mono font-bold tracking-wider">{authPatient.id}</span>
              </div>
+             <div className="text-slate-400 font-mono text-[10px] mt-1 ml-1">GEO: {authPatient.geoHash}</div>
            </div>
            <div className="text-right">
              <div className="text-xs text-slate-400 uppercase font-bold">Blood Type</div>
@@ -175,6 +288,12 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
               <div className="text-xs text-slate-400 uppercase mb-1">Status</div>
               <Badge color={getStatusColor(authPatient.status)}>{authPatient.status}</Badge>
            </div>
+        </div>
+        <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end relative z-10">
+           <button onClick={handleEditProfile} className="text-xs text-blue-600 font-bold hover:underline flex items-center gap-1">
+             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+             Edit Details
+           </button>
         </div>
       </div>
 
@@ -241,6 +360,14 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                 <span className="text-xs text-slate-400 font-mono">{new Date(rec.date).toLocaleDateString()}</span>
              </div>
              <p className="text-slate-700 text-sm leading-relaxed">{rec.description}</p>
+             {rec.type === 'AUDIO_NOTE' && (
+                 <div className="mt-3 bg-slate-50 p-2 rounded border border-slate-200 flex items-center gap-2">
+                     <button onClick={() => playVoiceNote(rec.description.replace('Voice Note: ', ''))} className="bg-blue-600 text-white rounded-full p-2 hover:bg-blue-700">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                     </button>
+                     <span className="text-xs font-bold text-slate-500 uppercase">Play Voice Note from Dr. {rec.doctorName}</span>
+                 </div>
+             )}
              <div className="mt-3 flex items-center gap-2 text-xs text-slate-400 border-t border-slate-100 pt-2">
                <span className="font-medium text-slate-600">{rec.doctorName}</span>
                <span>•</span>
@@ -257,6 +384,31 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
       </div>
 
       {/* MODALS */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+                <h3 className="text-lg font-bold text-slate-900 mb-4">Edit Personal Details</h3>
+                <div className="space-y-3">
+                    <p className="text-xs text-red-500">Note: Name and Date of Birth cannot be changed as they form your permanent Digital Identity.</p>
+                    <div>
+                        <label className="text-xs text-slate-500 mb-1 block font-bold">Blood Type</label>
+                        <select className="w-full border border-slate-300 rounded-sm p-2 text-sm" value={editBlood} onChange={e => setEditBlood(e.target.value)}>
+                            {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs text-slate-500 mb-1 block font-bold">Allergies (Comma separated)</label>
+                        <input className="w-full border border-slate-300 rounded-sm p-2 text-sm" value={editAllergies} onChange={e => setEditAllergies(e.target.value)} />
+                    </div>
+                    <div className="flex gap-3 mt-4">
+                        <Button variant="secondary" onClick={() => setShowEditModal(false)} className="flex-1">Cancel</Button>
+                        <Button onClick={submitEditProfile} className="flex-1">Save Changes</Button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
       {showApptModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-sm shadow-2xl">
@@ -350,7 +502,7 @@ export const PatientView: React.FC<PatientViewProps> = ({ patients }) => {
                   </div>
 
                   <div className="text-center mb-6">
-                    <div className="font-mono text-sm font-bold text-slate-900 tracking-wider">{authPatient.id}</div>
+                    <div className="font-mono text-sm font-bold text-slate-900 tracking-wider bg-slate-100 px-3 py-1 rounded border border-slate-200">{authPatient.id}</div>
                     <div className="text-[10px] text-slate-500 font-mono mt-1">GeoHash: {authPatient.geoHash}</div>
                   </div>
                   

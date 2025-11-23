@@ -24,10 +24,11 @@ export enum StaffStatus {
 export interface MedicalRecord {
   id: string;
   date: string;
-  type: 'DIAGNOSIS' | 'TREATMENT' | 'VACCINATION' | 'NOTE' | 'LETTER' | 'APPOINTMENT' | 'PRESCRIPTION' | 'TRANSFER';
+  type: 'DIAGNOSIS' | 'TREATMENT' | 'VACCINATION' | 'NOTE' | 'LETTER' | 'APPOINTMENT' | 'PRESCRIPTION' | 'TRANSFER' | 'AUDIO_NOTE';
   description: string;
   doctorName: string;
   location: string;
+  audioUrl?: string; // Mock URL or base64
   metadata?: {
     status?: 'PENDING' | 'CONFIRMED' | 'POSTPONED' | 'COMPLETED' | 'CANCELLED';
     originalDate?: string;
@@ -133,6 +134,7 @@ export interface StaffMember {
   phone: string;
   status: StaffStatus;
   lastCheckIn: string;
+  coordinates?: { lat: number; lng: number };
 }
 
 export interface EmergencyAlert {

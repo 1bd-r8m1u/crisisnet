@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { MeshState, SupplyRequest, StaffMember, Hospital, PatientTransferRequest, StaffStatus } from '../types';
 import { Card, Button, Badge } from './ui_components';
-import { getMeshState, updateSupplyRequest, acceptPatientTransfer, acceptTransportRequest, createTransportRequest, addStaffMember, updateStaffStatus, getResourceTrends, broadcastSupplyRequest, rejectPatientTransfer, broadcastEmergencyAlert } from '../services/mockMesh';
+import { getMeshState, updateSupplyRequest, acceptPatientTransfer, acceptTransportRequest, createTransportRequest, addStaffMember, updateStaffStatus, getResourceTrends, broadcastSupplyRequest, rejectPatientTransfer, broadcastEmergencyAlert, createSupplyRequest, registerNewHospital } from '../services/mockMesh';
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
 interface DirectorViewProps {
@@ -64,13 +64,31 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
   // Modals & Inputs
   const [showAddStaffModal, setShowAddStaffModal] = useState(false);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  const [showTransportModal, setShowTransportModal] = useState(false);
+  const [showSupplyModal, setShowSupplyModal] = useState(false);
+  const [showConnectNodeModal, setShowConnectNodeModal] = useState(false);
+  
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffRole, setNewStaffRole] = useState<'doctor' | 'nurse'>('doctor');
   const [newStaffPhone, setNewStaffPhone] = useState('');
 
   const [alertMessage, setAlertMessage] = useState('');
   const [alertSeverity, setAlertSeverity] = useState<'info' | 'warning' | 'critical'>('info');
+
+  const [transportType, setTransportType] = useState<'SUPPLY_RUN' | 'PATIENT_TRANSFER' | 'STAFF_ROTATION'>('SUPPLY_RUN');
+  const [transportDest, setTransportDest] = useState('');
+  const [transportNotes, setTransportNotes] = useState('');
   
+  // Supply Request (Director Side)
+  const [supplyItem, setSupplyItem] = useState('');
+  const [supplyQty, setSupplyQty] = useState(1);
+  const [supplySeverity, setSupplySeverity] = useState<'low' | 'medium' | 'critical'>('low');
+
+  // New Clinic State
+  const [newClinicName, setNewClinicName] = useState('');
+  const [newClinicType, setNewClinicType] = useState('Clinic');
+  const [newClinicProv, setNewClinicProv] = useState('Outlands');
+
   // Filter States
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -98,6 +116,36 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
       forceRefresh();
       alert("Emergency Alert Broadcasted.");
   };
+
+  const handleRequestTransport = () => {
+    if(!currentDirector) return;
+    createTransportRequest(currentDirector.id, currentDirector.hospitalId, transportType, transportNotes, transportDest);
+    setShowTransportModal(false);
+    setTransportNotes('');
+    alert("Transport Scheduled.");
+    forceRefresh();
+  };
+
+  const submitDirectorSupplyRequest = () => {
+      if (!currentDirector) return;
+      createSupplyRequest(
+          supplyItem, supplyQty, currentDirector.id, currentDirector.hospitalId, supplySeverity, ['General'], undefined, undefined, undefined, currentDirector.name
+      );
+      setShowSupplyModal(false);
+      alert("Supply request created.");
+      forceRefresh();
+  }
+
+  const handleConnectNode = () => {
+      // Simulate lat/lng relative to map center
+      const lat = 31.4 + (Math.random() * 0.2);
+      const lng = 34.3 + (Math.random() * 0.2);
+      const h = registerNewHospital(newClinicName, newClinicType, newClinicProv, lat, lng);
+      setShowConnectNodeModal(false);
+      setNewClinicName('');
+      alert(`New node '${h.name}' (${h.id}) connected to mesh.`);
+      forceRefresh();
+  }
 
   // Login
   if (!currentDirector) {
@@ -172,6 +220,7 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                 <button onClick={() => setActiveTab('TRANSFERS')} className={`px-3 py-1 text-xs rounded font-bold ${activeTab === 'TRANSFERS' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>Transfers {externalTransfers.length > 0 && `(${externalTransfers.length})`}</button>
                 <button onClick={() => setActiveTab('STAFF')} className={`px-3 py-1 text-xs rounded font-bold ${activeTab === 'STAFF' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>Staff Mgmt</button>
             </div>
+            <Button variant="primary" onClick={() => setShowTransportModal(true)} className="text-xs bg-indigo-600 hover:bg-indigo-700">🚚 Transport</Button>
             <Button variant="danger" onClick={() => setShowBroadcastModal(true)} className="text-xs shadow-md animate-pulse">📢 Broadcast Alert</Button>
             <Button variant="secondary" onClick={() => setCurrentDirector(null)} className="text-xs">Logout</Button>
          </div>
@@ -190,7 +239,13 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                      <div className="bg-slate-50 p-3 rounded border border-slate-200 text-center"><div className="text-2xl font-bold text-slate-800">{detailedPatients.length}</div><div className="text-[10px] text-slate-400 uppercase">Patients</div></div>
                  </div></Card></div>
                  <div className="lg:col-span-1"><Card title="Patients"><div className="space-y-2 max-h-[450px] overflow-y-auto">{detailedPatients.map(p => (
-                     <div key={p.id} className="p-2 bg-slate-50 border border-slate-200 rounded flex justify-between text-sm"><span className="font-bold text-slate-700">{p.name}</span><Badge color={p.status === 'CRITICAL' ? 'red' : 'green'}>{p.status}</Badge></div>
+                     <div key={p.id} className="p-2 bg-slate-50 border border-slate-200 rounded flex justify-between text-sm items-center">
+                         <div className="flex flex-col">
+                             <span className="font-bold text-slate-700">{p.name}</span>
+                             <span className="text-[9px] text-slate-400 font-mono tracking-tighter">LOC: {p.geoLocation.lat.toFixed(4)},{p.geoLocation.lng.toFixed(4)}</span>
+                         </div>
+                         <Badge color={p.status === 'CRITICAL' ? 'red' : 'green'}>{p.status}</Badge>
+                     </div>
                  ))}</div></Card></div>
                  <div className="lg:col-span-1"><Card title="Stock"><div className="space-y-2 max-h-[450px] overflow-y-auto">{detailedStock.map(s => (
                      <div key={s.id} className="p-2 bg-slate-50 border border-slate-200 rounded flex justify-between text-sm"><span className="font-bold text-slate-700">{s.item}</span><span className="font-mono">{s.quantity}</span></div>
@@ -250,6 +305,7 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                               <th className="px-6 py-3">Role</th>
                               <th className="px-6 py-3">Contact</th>
                               <th className="px-6 py-3">Status</th>
+                              <th className="px-6 py-3">Location</th>
                               <th className="px-6 py-3">Last Check-in</th>
                           </tr>
                       </thead>
@@ -267,6 +323,12 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                                       </Badge>
                                   </td>
                                   <td className="px-6 py-4 text-slate-400 font-mono text-xs">
+                                      {member.coordinates ? 
+                                          `${member.coordinates.lat.toFixed(4)}, ${member.coordinates.lng.toFixed(4)}` : 
+                                          <span className="text-red-300 italic">NO SIGNAL</span>
+                                      }
+                                  </td>
+                                  <td className="px-6 py-4 text-slate-400 font-mono text-xs">
                                       {new Date(member.lastCheckIn).toLocaleString()}
                                   </td>
                               </tr>
@@ -282,11 +344,12 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
             {/* MAP CARD */}
             <div className="lg:col-span-2 h-[450px] bg-slate-50 border border-slate-200 rounded-xl relative overflow-hidden shadow-sm">
               <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-[size:40px_40px]"></div>
-              <div className="absolute top-4 left-4 z-20 bg-white/90 backdrop-blur p-2 rounded border border-slate-200 shadow-sm">
+              <div className="absolute top-4 left-4 z-20 bg-white/90 backdrop-blur p-2 rounded border border-slate-200 shadow-sm flex gap-2">
                   <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
                       <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                       Live Mesh Topology
                   </h3>
+                  <Button variant="secondary" className="py-0 px-2 text-[10px]" onClick={() => setShowConnectNodeModal(true)}>+ Connect Node</Button>
               </div>
               
               <div className="absolute inset-0 z-10">
@@ -490,6 +553,109 @@ export const DirectorView: React.FC<DirectorViewProps> = ({ meshState }) => {
                       <div className="flex gap-3 mt-6">
                           <Button variant="secondary" onClick={() => setShowAddStaffModal(false)} className="flex-1">Cancel</Button>
                           <Button onClick={handleAddStaff} className="flex-1 bg-green-600 hover:bg-green-700">Recruit</Button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* TRANSPORT MODAL */}
+      {showTransportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <span className="text-2xl">🚛</span> Request Transport
+                  </h3>
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-xs text-slate-500 mb-1 font-bold">Transport Type</label>
+                          <select className="w-full border border-slate-300 rounded p-2 text-sm bg-white" value={transportType} onChange={e => setTransportType(e.target.value as any)}>
+                              <option value="SUPPLY_RUN">Supply Run</option>
+                              <option value="PATIENT_TRANSFER">Patient Transfer</option>
+                              <option value="STAFF_ROTATION">Staff Rotation</option>
+                          </select>
+                      </div>
+                      <div>
+                          <label className="block text-xs text-slate-500 mb-1 font-bold">Destination Hospital ID</label>
+                          <input className="w-full border border-slate-300 rounded p-2 text-sm" value={transportDest} onChange={e => setTransportDest(e.target.value)} placeholder="e.g. H103" />
+                      </div>
+                      <div>
+                          <label className="block text-xs text-slate-500 mb-1 font-bold">Notes / Payload</label>
+                          <textarea className="w-full border border-slate-300 rounded p-2 text-sm min-h-[80px]" value={transportNotes} onChange={e => setTransportNotes(e.target.value)} placeholder="Details..." />
+                      </div>
+                      <div className="flex gap-3 mt-6">
+                          <Button variant="secondary" onClick={() => setShowTransportModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleRequestTransport} className="flex-1 bg-indigo-600 hover:bg-indigo-700">Schedule</Button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* SUPPLY MODAL (DIRECTOR) */}
+      {showSupplyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4">Internal Supply Request</h3>
+                  <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Item Name</label>
+                        <input className="w-full border p-2 rounded" value={supplyItem} onChange={e => setSupplyItem(e.target.value)} placeholder="e.g. Generator Parts" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Quantity</label>
+                        <input type="number" className="w-full border p-2 rounded" value={supplyQty} onChange={e => setSupplyQty(parseInt(e.target.value))} />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1 font-bold">Urgency</label>
+                        <select className="w-full border p-2 rounded" value={supplySeverity} onChange={e => setSupplySeverity(e.target.value as any)}>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowSupplyModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={submitDirectorSupplyRequest} className="flex-1">Request & Broadcast</Button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* CONNECT NODE MODAL */}
+      {showConnectNodeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                     <span className="w-3 h-3 bg-green-500 rounded-full"></span> Connect New Node
+                  </h3>
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-xs text-slate-500 mb-1 font-bold">Clinic / Hospital Name</label>
+                          <input className="w-full border border-slate-300 rounded p-2 text-sm" value={newClinicName} onChange={e => setNewClinicName(e.target.value)} placeholder="e.g. North Outpost Clinic" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1 font-bold">Type</label>
+                            <select className="w-full border border-slate-300 rounded p-2 text-sm" value={newClinicType} onChange={e => setNewClinicType(e.target.value)}>
+                                <option>General</option>
+                                <option>Field</option>
+                                <option>Clinic</option>
+                                <option>Outreach</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1 font-bold">Province</label>
+                            <input className="w-full border border-slate-300 rounded p-2 text-sm" value={newClinicProv} onChange={e => setNewClinicProv(e.target.value)} />
+                          </div>
+                      </div>
+                      <div className="bg-slate-50 p-2 rounded text-[10px] text-slate-500 italic">
+                          New node will be assigned simulated coordinates near the current cluster.
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                          <Button variant="secondary" onClick={() => setShowConnectNodeModal(false)} className="flex-1">Cancel</Button>
+                          <Button onClick={handleConnectNode} className="flex-1 bg-green-600 hover:bg-green-700">Register Node</Button>
                       </div>
                   </div>
               </div>
