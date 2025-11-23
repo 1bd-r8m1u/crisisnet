@@ -49,6 +49,7 @@ export interface Patient {
   lastUpdated: string;
   records: MedicalRecord[];
   geoHash: string; 
+  geoLocation: { lat: number; lng: number };
   pendingConditions?: string[];
 }
 

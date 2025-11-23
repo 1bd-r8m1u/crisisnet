@@ -112,6 +112,9 @@ const determineInitialStatus = (conds: string[]): CriticalStatus => {
 
 const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
   const simulatedDob = generateSimulatedDOB(index);
+  const randomLat = 31.2 + (Math.random() * 0.4); 
+  const randomLng = 34.1 + (Math.random() * 0.5);
+
   return {
     id: generatePatientId(raw.name, simulatedDob), // Internal deterministic ID
     externalId: raw.id, // CSV ID
@@ -126,6 +129,7 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
     status: determineInitialStatus(raw.cond),
     lastUpdated: new Date(raw.last).toISOString(),
     geoHash: Math.random().toString(36).substring(2, 8).toUpperCase(), // Random random GeoHash
+    geoLocation: { lat: randomLat, lng: randomLng },
     records: [
       {
         id: `rec-${raw.id}-1`,
@@ -140,7 +144,7 @@ const INITIAL_PATIENTS: Patient[] = PATIENTS_RAW.map((raw, index) => {
 });
 
 // Simulate local storage persistence - V8 to force fresh schema
-const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V9_5';
+const STORAGE_KEY = 'CRISIS_NET_MESH_DB_V10_1';
 
 export const getMeshState = (): MeshState => {
   const stored = localStorage.getItem(STORAGE_KEY);
