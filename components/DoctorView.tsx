@@ -39,6 +39,9 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
   const [supplyDate, setSupplyDate] = useState('');
   const [linkToPatient, setLinkToPatient] = useState(false);
 
+  // Supply Alert State
+  const [expandSupplyAlert, setExpandSupplyAlert] = useState(false);
+
   // Transfer State
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferUrgency, setTransferUrgency] = useState<'IMMEDIATE' | 'STABLE'>('STABLE');
@@ -371,24 +374,38 @@ export const DoctorView: React.FC<DoctorViewProps> = ({ patients, onDataUpdate }
         <div className="lg:col-span-3 flex flex-col gap-4 min-h-0 h-full">
           
            {lowSupplies.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 shadow-sm flex-shrink-0">
-               <h3 className="text-red-700 font-bold text-xs uppercase mb-2 flex items-center gap-2">
-                 CRITICAL SUPPLY SHORTAGE
-               </h3>
-               <div className="space-y-2">
-                 {lowSupplies.map(s => (
-                   <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded-sm border border-red-100">
-                     <span className="text-slate-700 text-sm font-medium">{s.item}</span>
-                     <div className="text-right">
-                        <div className="text-red-600 font-mono font-bold text-lg leading-none">{s.quantity}</div>
-                        <div className="text-[10px] text-slate-400 opacity-70">Thresh: {s.criticalThreshold}</div>
-                     </div>
-                   </div>
-                 ))}
-               </div>
-               <button onClick={() => setShowSupplyModal(true)} className="w-full mt-3 bg-red-600 hover:bg-red-700 text-white text-xs py-1.5 rounded-sm font-medium uppercase tracking-wider">
-                   Order Restock Now
+            <div className={`bg-red-50 border border-red-200 rounded-lg shadow-sm flex-shrink-0 transition-all duration-200 ${expandSupplyAlert ? 'mb-4' : 'mb-2'}`}>
+               <button 
+                    onClick={() => setExpandSupplyAlert(!expandSupplyAlert)}
+                    className="w-full flex justify-between items-center p-3 text-red-700 hover:bg-red-100 transition-colors rounded-lg"
+               >
+                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    <span>Critical Shortages ({lowSupplies.length})</span>
+                 </div>
+                 <svg className={`w-4 h-4 transition-transform ${expandSupplyAlert ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                 </svg>
                </button>
+               
+               {expandSupplyAlert && (
+                 <div className="p-3 pt-0 border-t border-red-100 animate-fade-in">
+                    <div className="space-y-2 mt-2">
+                        {lowSupplies.map(s => (
+                        <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded-sm border border-red-100">
+                            <span className="text-slate-700 text-sm font-medium">{s.item}</span>
+                            <div className="text-right">
+                                <div className="text-red-600 font-mono font-bold text-lg leading-none">{s.quantity}</div>
+                                <div className="text-[10px] text-slate-400 opacity-70">Thresh: {s.criticalThreshold}</div>
+                            </div>
+                        </div>
+                        ))}
+                    </div>
+                    <button onClick={() => setShowSupplyModal(true)} className="w-full mt-3 bg-red-600 hover:bg-red-700 text-white text-xs py-1.5 rounded-sm font-medium uppercase tracking-wider">
+                        Order Restock Now
+                    </button>
+                 </div>
+               )}
             </div>
           )}
 
